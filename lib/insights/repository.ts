@@ -1,5 +1,12 @@
 import type { D1Database, D1Result } from "../db/d1.ts";
-import type { PageMetric, QueryMetric, QueryPageDailyMetric } from "./types.ts";
+import type {
+  PageMetric,
+  MonthlyPageMetric,
+  QueryDeviceMetric,
+  QueryMetric,
+  QueryPageDailyMetric,
+  SearchDevice,
+} from "./types.ts";
 import { finiteMetric } from "./metrics.ts";
 
 interface PeriodRow {
@@ -27,6 +34,18 @@ interface QueryPageRow {
 interface BestPageRow {
   query: string;
   page: string;
+}
+
+interface QueryDeviceRow extends PeriodRow {
+  device: string;
+}
+
+interface MonthlyPageRow {
+  page: string;
+  month: string;
+  clicks: number;
+  impressions: number;
+  position: number;
 }
 
 export interface DailyTotal {
@@ -57,6 +76,12 @@ function mapPeriodRow(row: PeriodRow): QueryMetric {
   };
 }
 
+function normalizeDevice(value: string): SearchDevice {
+  return value === "DESKTOP" || value === "MOBILE" || value === "TABLET"
+    ? value
+    : "UNKNOWN";
+}
+
 export class InsightsRepository {
   private readonly db: D1Database;
 
@@ -75,6 +100,26 @@ export class InsightsRepository {
       .first<string>("max_date");
   }
 
+  async completedDateCoverage(input: {
+    siteId: number;
+    searchType: string;
+    startDate: string;
+    endDate: string;
+    expectedDays: number;
+  }): Promise<number> {
+    if (input.expectedDays <= 0) return 0;
+    const count = await this.db
+      .prepare(
+        `SELECT COUNT(DISTINCT data_date) AS completed_days
+         FROM sync_runs
+         WHERE site_id = ? AND search_type = ? AND status = 'completed'
+           AND data_date BETWEEN ? AND ?`,
+      )
+      .bind(input.siteId, input.searchType, input.startDate, input.endDate)
+      .first<number>("completed_days");
+    return Math.min(1, finiteMetric(count) / input.expectedDays);
+  }
+
   async loadQueryMetrics(input: DateWindowInput): Promise<QueryMetric[]> {
     const result = await this.db
       .prepare(periodMetricSql("daily_query_metrics", "query"))
@@ -85,11 +130,111 @@ export class InsightsRepository {
     return rows.map((row) => ({ ...row, bestPage: bestPages.get(row.key) }));
   }
 
-  async loadPageMetrics(input: DateWindowInput): Promise<PageMetric[]> {
+  async loadQueryDeviceMetrics(input: {
+    siteId: number;
+    searchType: string;
+    startDate: string;
+    endDate: string;
+  }): Promise<QueryDeviceMetric[]> {
     const result = await this.db
       .prepare(
         `SELECT
-           m.page AS key,
+           m.query AS key,
+           m.device,
+           SUM(m.clicks) AS current_clicks,
+           SUM(m.impressions) AS current_impressions,
+           COALESCE(SUM(m.position * m.impressions) / NULLIF(SUM(m.impressions), 0), 0)
+             AS current_position,
+           0 AS previous_clicks,
+           0 AS previous_impressions,
+           0 AS previous_position
+         FROM daily_query_device_metrics m
+         JOIN sync_runs r ON r.id = m.sync_run_id AND r.status = 'completed'
+         JOIN sync_run_steps s
+           ON s.run_id = m.sync_run_id
+          AND s.dimension = 'query_device'
+          AND s.status = 'completed'
+         WHERE m.site_id = ? AND m.search_type = ? AND m.date BETWEEN ? AND ?
+         GROUP BY m.query, m.device
+         HAVING current_impressions > 0
+         ORDER BY current_impressions DESC
+         LIMIT 30000`,
+      )
+      .bind(input.siteId, input.searchType, input.startDate, input.endDate)
+      .all<QueryDeviceRow>();
+    return assertResult(result, "loading query/device metrics").map((row) => ({
+      ...mapPeriodRow(row),
+      device: normalizeDevice(row.device),
+    }));
+  }
+
+  async loadMonthlyPageMetrics(input: {
+    siteId: number;
+    searchType: string;
+    startDate: string;
+    endDate: string;
+  }): Promise<MonthlyPageMetric[]> {
+    const result = await this.db
+      .prepare(
+        `WITH top_pages AS (
+           SELECT m.page
+           FROM daily_page_metrics m
+           JOIN sync_runs r ON r.id = m.sync_run_id AND r.status = 'completed'
+           WHERE m.site_id = ? AND m.search_type = ? AND m.date BETWEEN ? AND ?
+           GROUP BY m.page
+           HAVING SUM(m.clicks) >= 20
+           ORDER BY SUM(m.clicks) DESC
+           LIMIT 5000
+         )
+         SELECT
+           m.page,
+           SUBSTR(m.date, 1, 7) AS month,
+           SUM(m.clicks) AS clicks,
+           SUM(m.impressions) AS impressions,
+           COALESCE(SUM(m.position * m.impressions) / NULLIF(SUM(m.impressions), 0), 0)
+             AS position
+         FROM daily_page_metrics m
+         JOIN sync_runs r ON r.id = m.sync_run_id AND r.status = 'completed'
+         JOIN top_pages p ON p.page = m.page
+         WHERE m.site_id = ? AND m.search_type = ? AND m.date BETWEEN ? AND ?
+         GROUP BY m.page, SUBSTR(m.date, 1, 7)
+         ORDER BY m.page, month`,
+      )
+      .bind(
+        input.siteId,
+        input.searchType,
+        input.startDate,
+        input.endDate,
+        input.siteId,
+        input.searchType,
+        input.startDate,
+        input.endDate,
+      )
+      .all<MonthlyPageRow>();
+    return assertResult(result, "loading monthly page metrics").map((row) => ({
+      page: row.page,
+      month: row.month,
+      clicks: finiteMetric(row.clicks),
+      impressions: finiteMetric(row.impressions),
+      position: finiteMetric(row.position),
+    }));
+  }
+
+  async loadPageMetrics(input: DateWindowInput): Promise<PageMetric[]> {
+    const result = await this.db
+      .prepare(
+        `WITH candidate_pages AS (
+           SELECT DISTINCT m.page
+           FROM daily_page_metrics m
+           JOIN sync_runs r ON r.id = m.sync_run_id AND r.status = 'completed'
+           WHERE m.site_id = ? AND m.search_type = ? AND m.date BETWEEN ? AND ?
+           UNION
+           SELECT su.url
+           FROM sitemap_urls su
+           WHERE su.site_id = ? AND su.is_present = 1
+         )
+         SELECT
+           p.page AS key,
            SUM(CASE WHEN m.date BETWEEN ? AND ? THEN m.clicks ELSE 0 END) AS current_clicks,
            SUM(CASE WHEN m.date BETWEEN ? AND ? THEN m.impressions ELSE 0 END) AS current_impressions,
            COALESCE(
@@ -105,16 +250,24 @@ export class InsightsRepository {
            MAX(CASE WHEN su.is_present = 1 THEN 1 ELSE 0 END) AS is_in_sitemap,
            CAST(julianday(?) - julianday(MIN(su.first_seen_at)) AS INTEGER) AS age_days,
            MAX(su.inferred_content_type) AS content_type
-         FROM daily_page_metrics m
-         JOIN sync_runs r ON r.id = m.sync_run_id AND r.status = 'completed'
-         LEFT JOIN sitemap_urls su ON su.site_id = m.site_id AND su.url = m.page
-         WHERE m.site_id = ? AND m.search_type = ? AND m.date BETWEEN ? AND ?
-         GROUP BY m.page
-         HAVING current_impressions > 0 OR previous_impressions > 0
+         FROM candidate_pages p
+         LEFT JOIN daily_page_metrics m
+           ON m.site_id = ? AND m.search_type = ? AND m.page = p.page
+          AND m.date BETWEEN ? AND ?
+         LEFT JOIN sync_runs r ON r.id = m.sync_run_id AND r.status = 'completed'
+         LEFT JOIN sitemap_urls su ON su.site_id = ? AND su.url = p.page
+         WHERE m.id IS NULL OR r.id IS NOT NULL
+         GROUP BY p.page
+         HAVING current_impressions > 0 OR previous_impressions > 0 OR is_in_sitemap = 1
          ORDER BY current_clicks + previous_clicks DESC
          LIMIT 10000`,
       )
       .bind(
+        input.siteId,
+        input.searchType,
+        input.previousStart,
+        input.currentEnd,
+        input.siteId,
         input.currentStart,
         input.currentEnd,
         input.currentStart,
@@ -136,6 +289,7 @@ export class InsightsRepository {
         input.searchType,
         input.previousStart,
         input.currentEnd,
+        input.siteId,
       )
       .all<PeriodRow>();
 

@@ -9,6 +9,7 @@ import {
   findCtrOpportunities,
   findLowPerformancePages,
   findNewRankings,
+  findPeakContentDecay,
   findStrikingDistance,
 } from "../lib/insights/algorithms.ts";
 import type {
@@ -87,7 +88,7 @@ test("CTR opportunities use the site's own non-brand benchmark and significance"
     }),
   ];
   const benchmarks = buildSiteCtrBenchmarks(calibration, brandTerms);
-  assert.equal(benchmarks.get("3")?.expectedCtr, 0.1);
+  assert.equal(benchmarks.get("ALL:3")?.expectedCtr, 0.1);
 
   const result = findCtrOpportunities(
     [
@@ -103,6 +104,57 @@ test("CTR opportunities use the site's own non-brand benchmark and significance"
   assert.equal(result.length, 1);
   assert.equal(result[0].expectedCtr, 0.1);
   assert.equal(result[0].missedClicks, 80);
+  assert.equal(result[0].device, "ALL");
+});
+
+test("CTR benchmarks are segmented by device with an all-device fallback", () => {
+  const calibration = [
+    {
+      ...queryMetric({
+        key: "تشک طبی موبایل",
+        current: { clicks: 120, impressions: 2_000, position: 3.1 },
+      }),
+      device: "MOBILE" as const,
+    },
+    {
+      ...queryMetric({
+        key: "تشک طبی دسکتاپ",
+        current: { clicks: 240, impressions: 2_000, position: 3.1 },
+      }),
+      device: "DESKTOP" as const,
+    },
+  ];
+  const benchmarks = buildSiteCtrBenchmarks(calibration, brandTerms);
+  assert.equal(benchmarks.get("MOBILE:3")?.expectedCtr, 0.06);
+  assert.equal(benchmarks.get("DESKTOP:3")?.expectedCtr, 0.12);
+  assert.equal(benchmarks.get("ALL:3")?.expectedCtr, 0.09);
+});
+
+test("content decay is suppressed when either period has incomplete data", () => {
+  const result = findContentDecay(
+    [
+      {
+        key: "/seasonal-page/",
+        current: { clicks: 40, impressions: 500, position: 10 },
+        previous: { clicks: 100, impressions: 1_000, position: 5 },
+      },
+    ],
+    { currentDataCoverage: 0.89, comparisonDataCoverage: 1 },
+  );
+  assert.deepEqual(result, []);
+});
+
+test("peak decay compares the latest full month with the prior 13-month peak", () => {
+  const result = findPeakContentDecay(
+    [
+      { page: "/guide/", month: "2026-01", clicks: 120, impressions: 1_200, position: 4 },
+      { page: "/guide/", month: "2026-07", clicks: 50, impressions: 700, position: 8 },
+    ],
+    "2026-07",
+  );
+  assert.equal(result.length, 1);
+  assert.equal(result[0].comparison, "peak");
+  assert.equal(result[0].previousClicks, 120);
 });
 
 test("cannibalization requires meaningful share and unstable daily winners", () => {
@@ -167,7 +219,22 @@ test("low-performance pages are review candidates, not automatic delete decision
   const result = findLowPerformancePages(rows);
   assert.equal(result.length, 1);
   assert.equal(result[0].action, "review_and_refresh");
+  assert.equal(result[0].category, "shown_not_clicked");
   assert.match(result[0].reason, /حذف خودکار توصیه نمی‌شود/);
+});
+
+test("sitemap URLs with no impressions are indexing review candidates", () => {
+  const result = findLowPerformancePages([
+    {
+      key: "/in-sitemap-but-invisible/",
+      current: { clicks: 0, impressions: 0, position: 0 },
+      previous: { clicks: 0, impressions: 0, position: 0 },
+      isInSitemap: true,
+      ageDays: 120,
+    },
+  ]);
+  assert.equal(result[0].category, "not_visible");
+  assert.equal(result[0].action, "inspect_indexing");
 });
 
 test("new visibility and new traffic are reported as different events", () => {
@@ -206,4 +273,38 @@ test("topic clustering groups Persian queries by shared meaningful tokens", () =
   assert.equal(clusters.length, 1);
   assert.equal(clusters[0].queries.length, 2);
   assert.match(clusters[0].label, /تشک|رویال/);
+  assert.equal(clusters[0].source, "suggested");
+});
+
+test("manual topic clusters take priority over automatic suggestions", () => {
+  const clusters = buildTopicClusters(
+    [
+      queryMetric({
+        key: "خرید تشک طبی برای کمر درد",
+        current: { clicks: 10, impressions: 200, position: 6 },
+      }),
+      queryMetric({
+        key: "قیمت تشک مموری فوم",
+        current: { clicks: 8, impressions: 180, position: 7 },
+      }),
+    ],
+    [{ label: "تشک طبی", terms: ["تشک طبی", "مموری فوم"] }],
+  );
+  assert.equal(clusters[0].label, "تشک طبی");
+  assert.equal(clusters[0].source, "manual");
+  assert.equal(clusters[0].queries.length, 2);
+});
+
+test("striking distance position window is configurable", () => {
+  const result = findStrikingDistance(
+    [
+      queryMetric({
+        key: "تشک صفحه دوم",
+        current: { clicks: 1, impressions: 200, position: 24 },
+      }),
+    ],
+    brandTerms,
+    { minimumPosition: 11, maximumPosition: 30 },
+  );
+  assert.equal(result.length, 1);
 });

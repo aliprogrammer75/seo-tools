@@ -20,6 +20,11 @@ const STEPS: StepDefinition[] = [
   { dimension: "page", gscDimensions: ["page"], rowLimit: GSC_MAX_ROW_LIMIT },
   { dimension: "device", gscDimensions: ["device"], rowLimit: GSC_MAX_ROW_LIMIT },
   {
+    dimension: "query_device",
+    gscDimensions: ["query", "device"],
+    rowLimit: GSC_MAX_ROW_LIMIT,
+  },
+  {
     dimension: "query_page",
     gscDimensions: ["query", "page"],
     rowLimit: GSC_MAX_ROW_LIMIT,
@@ -70,7 +75,12 @@ function normalizeRows(
   dimension: SyncDimension,
   rows: Awaited<ReturnType<SearchConsoleReader["queryPage"]>>["rows"] = [],
 ): NormalizedMetricRow[] {
-  const requiredKeys = dimension === "totals" ? 0 : dimension === "query_page" ? 2 : 1;
+  const requiredKeys =
+    dimension === "totals"
+      ? 0
+      : dimension === "query_page" || dimension === "query_device"
+        ? 2
+        : 1;
 
   return (rows ?? []).map((row) => {
     const keys = row.keys ?? [];
@@ -102,13 +112,15 @@ export async function importSearchConsoleDay(input: ImportDayInput): Promise<Imp
     requestedBy: input.requestedBy ?? "manual",
   });
 
-  if (run.status === "completed") {
-    return { runId: run.id, status: "skipped", importedRows: 0, completedSteps: [] };
-  }
-
   const existingSteps = new Map(
     (await input.repository.listSteps(run.id)).map((step) => [step.dimension, step]),
   );
+  if (
+    run.status === "completed" &&
+    STEPS.every((step) => existingSteps.get(step.dimension)?.status === "completed")
+  ) {
+    return { runId: run.id, status: "skipped", importedRows: 0, completedSteps: [] };
+  }
   const completedSteps: SyncDimension[] = [];
   let importedRows = 0;
 

@@ -11,10 +11,15 @@ import {
 } from "./metrics.ts";
 import type {
   PageMetric,
+  MonthlyPageMetric,
   PeriodMetric,
+  QueryDeviceMetric,
   QueryMetric,
   QueryPageDailyMetric,
+  SearchDevice,
+  TopicClusterSeed,
 } from "./types.ts";
+import { DEFAULT_INSIGHT_SETTINGS } from "./settings.ts";
 
 const CONFIDENCE_Z_95 = 1.96;
 
@@ -30,15 +35,41 @@ export interface ContentDecayInsight {
   decayPercent: number;
   zScore: number;
   cause: "ranking_loss" | "visibility_loss" | "snippet_ctr" | "mixed";
+  comparison: "previous_period" | "year_over_year" | "peak";
   score: number;
+}
+
+export interface ContentDecayOptions {
+  minimumPreviousClicks?: number;
+  minimumLostClicks?: number;
+  minimumDecayRatio?: number;
+  minimumDataCoverage?: number;
+  currentDataCoverage?: number;
+  comparisonDataCoverage?: number;
+  comparison?: ContentDecayInsight["comparison"];
 }
 
 export function findContentDecay(
   rows: PageMetric[],
-  options: { minimumPreviousClicks?: number; minimumLostClicks?: number } = {},
+  options: ContentDecayOptions = {},
 ): ContentDecayInsight[] {
-  const minimumPreviousClicks = options.minimumPreviousClicks ?? 20;
-  const minimumLostClicks = options.minimumLostClicks ?? 10;
+  const minimumPreviousClicks =
+    options.minimumPreviousClicks ?? DEFAULT_INSIGHT_SETTINGS.decayMinimumPreviousClicks;
+  const minimumLostClicks =
+    options.minimumLostClicks ?? DEFAULT_INSIGHT_SETTINGS.decayMinimumLostClicks;
+  const minimumDecayRatio =
+    options.minimumDecayRatio ?? DEFAULT_INSIGHT_SETTINGS.decayMinimumRatio;
+  const minimumDataCoverage =
+    options.minimumDataCoverage ?? DEFAULT_INSIGHT_SETTINGS.minimumDataCoverage;
+  const currentDataCoverage = options.currentDataCoverage ?? 1;
+  const comparisonDataCoverage = options.comparisonDataCoverage ?? 1;
+
+  if (
+    currentDataCoverage < minimumDataCoverage ||
+    comparisonDataCoverage < minimumDataCoverage
+  ) {
+    return [];
+  }
 
   return rows
     .map((row): ContentDecayInsight | null => {
@@ -49,7 +80,7 @@ export function findContentDecay(
         row.previous.clicks < minimumPreviousClicks ||
         lostClicks < minimumLostClicks ||
         change === null ||
-        change > -0.2 ||
+        change > -minimumDecayRatio ||
         zScore < CONFIDENCE_Z_95
       ) {
         return null;
@@ -77,11 +108,47 @@ export function findContentDecay(
         decayPercent: change * 100,
         zScore,
         cause,
+        comparison: options.comparison ?? "previous_period",
         score: lostClicks * Math.abs(change) * Math.min(zScore, 5),
       };
     })
     .filter((row): row is ContentDecayInsight => row !== null)
     .sort((a, b) => b.score - a.score);
+}
+
+export function findPeakContentDecay(
+  rows: MonthlyPageMetric[],
+  latestMonth: string,
+  options: Omit<ContentDecayOptions, "comparison"> = {},
+): ContentDecayInsight[] {
+  const byPage = new Map<string, MonthlyPageMetric[]>();
+  for (const row of rows) {
+    const list = byPage.get(row.page) ?? [];
+    list.push(row);
+    byPage.set(row.page, list);
+  }
+
+  const comparisons: PageMetric[] = [];
+  for (const [page, months] of byPage) {
+    const latest = months.find((row) => row.month === latestMonth) ?? {
+      page,
+      month: latestMonth,
+      clicks: 0,
+      impressions: 0,
+      position: 0,
+    };
+    const peak = months
+      .filter((row) => row.month < latestMonth)
+      .sort((a, b) => b.clicks - a.clicks || b.impressions - a.impressions)[0];
+    if (!peak) continue;
+    comparisons.push({
+      key: page,
+      current: latest,
+      previous: peak,
+    });
+  }
+
+  return findContentDecay(comparisons, { ...options, comparison: "peak" });
 }
 
 export interface StrikingDistanceInsight {
@@ -93,17 +160,37 @@ export interface StrikingDistanceInsight {
   opportunityScore: number;
 }
 
+export interface StrikingDistanceOptions {
+  minimumPosition?: number;
+  maximumPosition?: number;
+  minimumImpressions?: number;
+  targetPosition?: number;
+}
+
 export function findStrikingDistance(
   rows: QueryMetric[],
   brandTerms: BrandTerm[],
+  options: StrikingDistanceOptions = {},
 ): StrikingDistanceInsight[] {
+  const minimumPosition =
+    options.minimumPosition ?? DEFAULT_INSIGHT_SETTINGS.strikingMinimumPosition;
+  const maximumPosition =
+    options.maximumPosition ?? DEFAULT_INSIGHT_SETTINGS.strikingMaximumPosition;
+  const minimumImpressions =
+    options.minimumImpressions ?? DEFAULT_INSIGHT_SETTINGS.strikingMinimumImpressions;
+  const targetPosition = options.targetPosition ?? 3;
+
+  if (minimumPosition < 1 || maximumPosition < minimumPosition) {
+    throw new RangeError("Invalid striking-distance position window");
+  }
+
   return rows
     .filter(
       (row) =>
         !isSiteBrand(row.key, brandTerms) &&
-        row.current.impressions >= 50 &&
-        row.current.position >= 8 &&
-        row.current.position <= 20,
+        row.current.impressions >= minimumImpressions &&
+        row.current.position >= minimumPosition &&
+        row.current.position <= maximumPosition,
     )
     .map((row) => ({
       query: row.key,
@@ -111,8 +198,7 @@ export function findStrikingDistance(
       clicks: row.current.clicks,
       impressions: row.current.impressions,
       position: row.current.position,
-      opportunityScore:
-        row.current.impressions * ((21 - row.current.position) / 13),
+      opportunityScore: row.current.impressions / Math.max(1, row.current.position - targetPosition),
     }))
     .sort((a, b) => b.opportunityScore - a.opportunityScore);
 }
@@ -130,35 +216,58 @@ function ctrBand(position: number): CtrBand | null {
   return "8-10";
 }
 
-interface CtrBenchmark {
+export interface CtrBenchmark {
   band: CtrBand;
+  device: SearchDevice | "ALL";
   clicks: number;
   impressions: number;
   expectedCtr: number;
 }
 
+type CtrMetric = QueryMetric | QueryDeviceMetric;
+
+function metricDevice(row: CtrMetric): SearchDevice | "ALL" {
+  return "device" in row ? row.device : "ALL";
+}
+
+function benchmarkKey(device: SearchDevice | "ALL", band: CtrBand): string {
+  return `${device}:${band}`;
+}
+
 export function buildSiteCtrBenchmarks(
-  calibrationRows: QueryMetric[],
+  calibrationRows: CtrMetric[],
   brandTerms: BrandTerm[],
-  minimumImpressions = 1_000,
-): Map<CtrBand, CtrBenchmark> {
-  const totals = new Map<CtrBand, { clicks: number; impressions: number }>();
+  minimumImpressions = DEFAULT_INSIGHT_SETTINGS.ctrMinimumBenchmarkImpressions,
+): Map<string, CtrBenchmark> {
+  const totals = new Map<
+    string,
+    { band: CtrBand; device: SearchDevice | "ALL"; clicks: number; impressions: number }
+  >();
 
   for (const row of calibrationRows) {
     if (isSiteBrand(row.key, brandTerms)) continue;
     const band = ctrBand(row.current.position);
     if (!band) continue;
-    const total = totals.get(band) ?? { clicks: 0, impressions: 0 };
-    total.clicks += row.current.clicks;
-    total.impressions += row.current.impressions;
-    totals.set(band, total);
+    const device = metricDevice(row);
+    const devices: Array<SearchDevice | "ALL"> = device === "ALL" ? ["ALL"] : [device, "ALL"];
+    for (const targetDevice of devices) {
+      const key = benchmarkKey(targetDevice, band);
+      const total = totals.get(key) ?? {
+        band,
+        device: targetDevice,
+        clicks: 0,
+        impressions: 0,
+      };
+      total.clicks += row.current.clicks;
+      total.impressions += row.current.impressions;
+      totals.set(key, total);
+    }
   }
 
-  const result = new Map<CtrBand, CtrBenchmark>();
-  for (const [band, total] of totals) {
+  const result = new Map<string, CtrBenchmark>();
+  for (const [key, total] of totals) {
     if (total.impressions < minimumImpressions) continue;
-    result.set(band, {
-      band,
+    result.set(key, {
       ...total,
       expectedCtr: total.clicks / total.impressions,
     });
@@ -169,6 +278,7 @@ export function buildSiteCtrBenchmarks(
 export interface CtrOpportunityInsight {
   query: string;
   page?: string;
+  device: SearchDevice | "ALL";
   clicks: number;
   impressions: number;
   position: number;
@@ -178,18 +288,48 @@ export interface CtrOpportunityInsight {
   zScore: number;
 }
 
+export interface CtrOpportunityOptions {
+  minimumQueryImpressions?: number;
+  minimumBenchmarkImpressions?: number;
+  maximumExpectedRatio?: number;
+  minimumMissedClicks?: number;
+}
+
 export function findCtrOpportunities(
-  rows: QueryMetric[],
-  calibrationRows: QueryMetric[],
+  rows: CtrMetric[],
+  calibrationRows: CtrMetric[],
   brandTerms: BrandTerm[],
+  options: CtrOpportunityOptions = {},
 ): CtrOpportunityInsight[] {
-  const benchmarks = buildSiteCtrBenchmarks(calibrationRows, brandTerms);
+  const minimumQueryImpressions =
+    options.minimumQueryImpressions ?? DEFAULT_INSIGHT_SETTINGS.ctrMinimumQueryImpressions;
+  const minimumBenchmarkImpressions =
+    options.minimumBenchmarkImpressions ??
+    DEFAULT_INSIGHT_SETTINGS.ctrMinimumBenchmarkImpressions;
+  const maximumExpectedRatio =
+    options.maximumExpectedRatio ?? DEFAULT_INSIGHT_SETTINGS.ctrMaximumExpectedRatio;
+  const minimumMissedClicks =
+    options.minimumMissedClicks ?? DEFAULT_INSIGHT_SETTINGS.ctrMinimumMissedClicks;
+  const benchmarks = buildSiteCtrBenchmarks(
+    calibrationRows,
+    brandTerms,
+    minimumBenchmarkImpressions,
+  );
 
   return rows
     .map((row): CtrOpportunityInsight | null => {
-      if (isSiteBrand(row.key, brandTerms) || row.current.impressions < 100) return null;
+      if (
+        isSiteBrand(row.key, brandTerms) ||
+        row.current.impressions < minimumQueryImpressions
+      ) {
+        return null;
+      }
       const band = ctrBand(row.current.position);
-      const benchmark = band ? benchmarks.get(band) : undefined;
+      const device = metricDevice(row);
+      const benchmark = band
+        ? benchmarks.get(benchmarkKey(device, band)) ??
+          benchmarks.get(benchmarkKey("ALL", band))
+        : undefined;
       if (!benchmark) return null;
       const actualCtr = ctr(row.current);
       const missedClicks = Math.floor(
@@ -202,8 +342,8 @@ export function findCtrOpportunities(
         benchmarkImpressions: benchmark.impressions,
       });
       if (
-        actualCtr >= benchmark.expectedCtr * 0.6 ||
-        missedClicks < 5 ||
+        actualCtr >= benchmark.expectedCtr * maximumExpectedRatio ||
+        missedClicks < minimumMissedClicks ||
         zScore < CONFIDENCE_Z_95
       ) {
         return null;
@@ -211,6 +351,7 @@ export function findCtrOpportunities(
       return {
         query: row.key,
         page: row.bestPage,
+        device,
         clicks: row.current.clicks,
         impressions: row.current.impressions,
         position: row.current.position,
@@ -244,10 +385,29 @@ export interface CannibalizationInsight {
   competingPages: CannibalizationPage[];
 }
 
+export interface CannibalizationOptions {
+  minimumQueryImpressions?: number;
+  minimumPageImpressions?: number;
+  minimumPageShare?: number;
+  minimumWinnerSwitchRate?: number;
+}
+
 export function findCannibalization(
   rows: QueryPageDailyMetric[],
   brandTerms: BrandTerm[],
+  options: CannibalizationOptions = {},
 ): CannibalizationInsight[] {
+  const minimumQueryImpressions =
+    options.minimumQueryImpressions ??
+    DEFAULT_INSIGHT_SETTINGS.cannibalizationMinimumQueryImpressions;
+  const minimumPageImpressions =
+    options.minimumPageImpressions ??
+    DEFAULT_INSIGHT_SETTINGS.cannibalizationMinimumPageImpressions;
+  const minimumPageShare =
+    options.minimumPageShare ?? DEFAULT_INSIGHT_SETTINGS.cannibalizationMinimumPageShare;
+  const minimumWinnerSwitchRate =
+    options.minimumWinnerSwitchRate ??
+    DEFAULT_INSIGHT_SETTINGS.cannibalizationMinimumSwitchRate;
   const byQuery = new Map<string, QueryPageDailyMetric[]>();
   for (const row of rows) {
     if (isSiteBrand(row.query, brandTerms)) continue;
@@ -259,7 +419,7 @@ export function findCannibalization(
   const insights: CannibalizationInsight[] = [];
   for (const [query, queryRows] of byQuery) {
     const totalImpressions = queryRows.reduce((sum, row) => sum + row.impressions, 0);
-    if (totalImpressions < 200) continue;
+    if (totalImpressions < minimumQueryImpressions) continue;
     const pages = new Map<string, MetricsAccumulator>();
     for (const row of queryRows) {
       const page = pages.get(row.page) ?? new MetricsAccumulator();
@@ -274,7 +434,11 @@ export function findCannibalization(
         position: metrics.position(),
         impressionShare: metrics.impressions / totalImpressions,
       }))
-      .filter((page) => page.impressions >= 30 && page.impressionShare >= 0.15)
+      .filter(
+        (page) =>
+          page.impressions >= minimumPageImpressions &&
+          page.impressionShare >= minimumPageShare,
+      )
       .sort((a, b) => b.clicks - a.clicks || b.impressions - a.impressions);
     if (significant.length < 2) continue;
 
@@ -299,7 +463,10 @@ export function findCannibalization(
     const winnerSwitchRate = winners.length > 1 ? winnerSwitches / (winners.length - 1) : 0;
     const positionGap = Math.abs(significant[0].position - significant[1].position);
     const dominantShare = Math.max(...significant.map((page) => page.impressionShare));
-    const isCritical = positionGap <= 3 && winnerSwitchRate >= 0.2 && dominantShare < 0.8;
+    const isCritical =
+      positionGap <= 3 &&
+      winnerSwitchRate >= minimumWinnerSwitchRate &&
+      dominantShare < 0.8;
     if (!isCritical && winnerSwitches === 0 && positionGap > 5) continue;
 
     insights.push({
@@ -338,34 +505,90 @@ class MetricsAccumulator {
 
 export interface LowPerformancePageInsight {
   page: string;
+  category: "not_visible" | "shown_not_clicked" | "weak_visibility";
   impressions: number;
   position: number;
   confidence: "high" | "medium";
-  action: "review_and_refresh" | "review_merge_or_noindex";
+  action: "inspect_indexing" | "review_and_refresh" | "review_merge_or_noindex";
   reason: string;
 }
 
-export function findLowPerformancePages(rows: PageMetric[]): LowPerformancePageInsight[] {
+export interface LowPerformanceOptions {
+  minimumAgeDays?: number;
+  minimumShownImpressions?: number;
+  minimumWeakPosition?: number;
+}
+
+export function findLowPerformancePages(
+  rows: PageMetric[],
+  options: LowPerformanceOptions = {},
+): LowPerformancePageInsight[] {
+  const minimumAgeDays =
+    options.minimumAgeDays ?? DEFAULT_INSIGHT_SETTINGS.lowPerformanceMinimumAgeDays;
+  const minimumShownImpressions =
+    options.minimumShownImpressions ??
+    DEFAULT_INSIGHT_SETTINGS.lowPerformanceMinimumImpressions;
+  const minimumWeakPosition =
+    options.minimumWeakPosition ?? DEFAULT_INSIGHT_SETTINGS.lowPerformanceMinimumPosition;
+
   return rows
-    .filter(
-      (row) =>
-        row.current.clicks === 0 &&
-        row.current.impressions >= 200 &&
-        row.current.position >= 15 &&
-        (row.ageDays === undefined || row.ageDays >= 90),
-    )
-    .map((row) => ({
-      page: row.key,
-      impressions: row.current.impressions,
-      position: row.current.position,
-      confidence: row.isInSitemap === true && (row.ageDays ?? 90) >= 90 ? "high" as const : "medium" as const,
-      action:
-        row.isInSitemap === false
-          ? "review_merge_or_noindex" as const
-          : "review_and_refresh" as const,
-      reason:
-        "این صفحه در بازه بلندمدت دیده شده اما کلیک نگرفته است؛ حذف خودکار توصیه نمی‌شود.",
-    }))
+    .map((row): LowPerformancePageInsight | null => {
+      if (row.current.clicks > 0 || (row.ageDays ?? minimumAgeDays) < minimumAgeDays) {
+        return null;
+      }
+      const confidence =
+        row.isInSitemap === true && (row.ageDays ?? minimumAgeDays) >= minimumAgeDays
+          ? "high" as const
+          : "medium" as const;
+      if (row.isInSitemap === true && row.current.impressions === 0) {
+        return {
+          page: row.key,
+          category: "not_visible",
+          impressions: 0,
+          position: 0,
+          confidence,
+          action: "inspect_indexing",
+          reason:
+            "این URL در سایت‌مپ است اما در بازه بررسی هیچ ایمپرشنی ندارد؛ ابتدا وضعیت ایندکس، canonical و کیفیت صفحه بررسی شود.",
+        };
+      }
+      if (
+        row.current.impressions >= minimumShownImpressions &&
+        row.current.position >= minimumWeakPosition
+      ) {
+        return {
+          page: row.key,
+          category: "shown_not_clicked",
+          impressions: row.current.impressions,
+          position: row.current.position,
+          confidence,
+          action:
+            row.isInSitemap === false ? "review_merge_or_noindex" : "review_and_refresh",
+          reason:
+            "این صفحه دیده شده اما کلیک نگرفته است؛ نیت جست‌وجو، محتوا و اسنیپت بررسی شود و حذف خودکار توصیه نمی‌شود.",
+        };
+      }
+      if (
+        row.current.impressions > 0 &&
+        row.current.impressions < minimumShownImpressions &&
+        row.current.position >= minimumWeakPosition &&
+        row.previous.clicks === 0 &&
+        row.previous.impressions <= minimumShownImpressions
+      ) {
+        return {
+          page: row.key,
+          category: "weak_visibility",
+          impressions: row.current.impressions,
+          position: row.current.position,
+          confidence,
+          action: "review_and_refresh",
+          reason:
+            "صفحه قدیمی است اما در دو دوره فقط دیده‌شدن ضعیفی داشته است؛ ارتباط موضوعی، لینک داخلی و ارزش محتوایی بررسی شود.",
+        };
+      }
+      return null;
+    })
+    .filter((row): row is LowPerformancePageInsight => row !== null)
     .sort((a, b) => b.impressions - a.impressions);
 }
 
@@ -429,9 +652,10 @@ export interface TopicCluster {
   queries: string[];
   clicks: number;
   impressions: number;
+  source: "manual" | "suggested";
 }
 
-export function buildTopicClusters(rows: QueryMetric[]): TopicCluster[] {
+function buildSuggestedTopicClusters(rows: QueryMetric[]): TopicCluster[] {
   const candidates = rows
     .filter((row) => row.current.impressions > 0)
     .slice(0, 3_000)
@@ -500,9 +724,48 @@ export function buildTopicClusters(rows: QueryMetric[]): TopicCluster[] {
         queries: group.map((item) => item.row.key),
         clicks: group.reduce((sum, item) => sum + item.row.current.clicks, 0),
         impressions: group.reduce((sum, item) => sum + item.row.current.impressions, 0),
+        source: "suggested" as const,
       };
     })
     .sort((a, b) => b.clicks - a.clicks || b.impressions - a.impressions);
+}
+
+export function buildTopicClusters(
+  rows: QueryMetric[],
+  seeds: TopicClusterSeed[] = [],
+): TopicCluster[] {
+  const matchedQueries = new Set<string>();
+  const manual = seeds
+    .map((seed): TopicCluster | null => {
+      const terms = seed.terms
+        .map(normalizeSearchText)
+        .filter((term) => term.length >= 2);
+      if (terms.length === 0) return null;
+      const matches = rows.filter((row) => {
+        const query = normalizeSearchText(row.key);
+        return row.current.impressions > 0 && terms.some((term) => query.includes(term));
+      });
+      if (matches.length === 0) return null;
+      matches.forEach((row) => matchedQueries.add(row.key));
+      return {
+        label: seed.label,
+        queries: matches.map((row) => row.key),
+        clicks: matches.reduce((sum, row) => sum + row.current.clicks, 0),
+        impressions: matches.reduce((sum, row) => sum + row.current.impressions, 0),
+        source: "manual",
+      };
+    })
+    .filter((cluster): cluster is TopicCluster => cluster !== null);
+
+  const suggestions = buildSuggestedTopicClusters(
+    rows.filter((row) => !matchedQueries.has(row.key)),
+  );
+  return [...manual, ...suggestions].sort(
+    (a, b) =>
+      Number(b.source === "manual") - Number(a.source === "manual") ||
+      b.clicks - a.clicks ||
+      b.impressions - a.impressions,
+  );
 }
 
 export function toQueryMetric(row: PeriodMetric, bestPage?: string): QueryMetric {

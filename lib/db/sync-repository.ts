@@ -24,7 +24,14 @@ interface StepRow {
   row_count: number;
 }
 
-const DIMENSIONS: SyncDimension[] = ["totals", "query", "page", "device", "query_page"];
+const DIMENSIONS: SyncDimension[] = [
+  "totals",
+  "query",
+  "page",
+  "device",
+  "query_device",
+  "query_page",
+];
 const MAX_BATCH_STATEMENTS = 100;
 
 function metricTable(dimension: SyncDimension): string {
@@ -33,6 +40,7 @@ function metricTable(dimension: SyncDimension): string {
     query: "daily_query_metrics",
     page: "daily_page_metrics",
     device: "daily_device_metrics",
+    query_device: "daily_query_device_metrics",
     query_page: "daily_query_page_metrics",
   };
   return tables[dimension];
@@ -118,6 +126,23 @@ function metricStatement(
            imported_at = CURRENT_TIMESTAMP`,
       )
       .bind(...common, row.keys[0], ...metrics);
+  }
+
+  if (dimension === "query_device") {
+    return db
+      .prepare(
+        `INSERT INTO daily_query_device_metrics
+           (sync_run_id, site_id, date, search_type, query, device,
+            clicks, impressions, ctr, position)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(sync_run_id, query, device) DO UPDATE SET
+           clicks = excluded.clicks,
+           impressions = excluded.impressions,
+           ctr = excluded.ctr,
+           position = excluded.position,
+           imported_at = CURRENT_TIMESTAMP`,
+      )
+      .bind(...common, row.keys[0], row.keys[1], ...metrics);
   }
 
   return db

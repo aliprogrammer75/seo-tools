@@ -1,5 +1,10 @@
 import type { D1Database } from "./d1.ts";
 import type { SearchAnalyticsType } from "../search-console/pagination.ts";
+import {
+  DEFAULT_INSIGHT_SETTINGS,
+  type SiteInsightSettings,
+} from "../insights/settings.ts";
+import type { TopicClusterSeed } from "../insights/types.ts";
 
 export interface SiteRecord {
   id: number;
@@ -36,6 +41,14 @@ export interface SiteConfiguration {
   brandTerms: SiteBrandTermRecord[];
   contentRules: SiteContentRuleRecord[];
   sitemaps: SiteSitemapRecord[];
+  insightSettings: SiteInsightSettings;
+  topicClusters: TopicClusterSeed[];
+}
+
+interface TopicClusterRow {
+  id: number;
+  label: string;
+  term: string;
 }
 
 function asRecord(value: unknown, context: string): Record<string, unknown> {
@@ -68,6 +81,128 @@ function requiredNumber(
     throw new Error(`Invalid ${key} returned for ${context}`);
   }
   return value;
+}
+
+function numericSetting(
+  row: Record<string, unknown>,
+  key: string,
+  fallback: number,
+): number {
+  const value = row[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+function parseInsightSettings(value: unknown): SiteInsightSettings {
+  if (!value) return { ...DEFAULT_INSIGHT_SETTINGS };
+  const row = asRecord(value, "site insight settings");
+  return {
+    minimumDataCoverage: numericSetting(
+      row,
+      "minimum_data_coverage",
+      DEFAULT_INSIGHT_SETTINGS.minimumDataCoverage,
+    ),
+    decayMinimumPreviousClicks: numericSetting(
+      row,
+      "decay_minimum_previous_clicks",
+      DEFAULT_INSIGHT_SETTINGS.decayMinimumPreviousClicks,
+    ),
+    decayMinimumLostClicks: numericSetting(
+      row,
+      "decay_minimum_lost_clicks",
+      DEFAULT_INSIGHT_SETTINGS.decayMinimumLostClicks,
+    ),
+    decayMinimumRatio: numericSetting(
+      row,
+      "decay_minimum_ratio",
+      DEFAULT_INSIGHT_SETTINGS.decayMinimumRatio,
+    ),
+    strikingMinimumPosition: numericSetting(
+      row,
+      "striking_minimum_position",
+      DEFAULT_INSIGHT_SETTINGS.strikingMinimumPosition,
+    ),
+    strikingMaximumPosition: numericSetting(
+      row,
+      "striking_maximum_position",
+      DEFAULT_INSIGHT_SETTINGS.strikingMaximumPosition,
+    ),
+    strikingMinimumImpressions: numericSetting(
+      row,
+      "striking_minimum_impressions",
+      DEFAULT_INSIGHT_SETTINGS.strikingMinimumImpressions,
+    ),
+    ctrMinimumQueryImpressions: numericSetting(
+      row,
+      "ctr_minimum_query_impressions",
+      DEFAULT_INSIGHT_SETTINGS.ctrMinimumQueryImpressions,
+    ),
+    ctrMinimumBenchmarkImpressions: numericSetting(
+      row,
+      "ctr_minimum_benchmark_impressions",
+      DEFAULT_INSIGHT_SETTINGS.ctrMinimumBenchmarkImpressions,
+    ),
+    ctrMaximumExpectedRatio: numericSetting(
+      row,
+      "ctr_maximum_expected_ratio",
+      DEFAULT_INSIGHT_SETTINGS.ctrMaximumExpectedRatio,
+    ),
+    ctrMinimumMissedClicks: numericSetting(
+      row,
+      "ctr_minimum_missed_clicks",
+      DEFAULT_INSIGHT_SETTINGS.ctrMinimumMissedClicks,
+    ),
+    cannibalizationMinimumQueryImpressions: numericSetting(
+      row,
+      "cannibalization_minimum_query_impressions",
+      DEFAULT_INSIGHT_SETTINGS.cannibalizationMinimumQueryImpressions,
+    ),
+    cannibalizationMinimumPageImpressions: numericSetting(
+      row,
+      "cannibalization_minimum_page_impressions",
+      DEFAULT_INSIGHT_SETTINGS.cannibalizationMinimumPageImpressions,
+    ),
+    cannibalizationMinimumPageShare: numericSetting(
+      row,
+      "cannibalization_minimum_page_share",
+      DEFAULT_INSIGHT_SETTINGS.cannibalizationMinimumPageShare,
+    ),
+    cannibalizationMinimumSwitchRate: numericSetting(
+      row,
+      "cannibalization_minimum_switch_rate",
+      DEFAULT_INSIGHT_SETTINGS.cannibalizationMinimumSwitchRate,
+    ),
+    lowPerformanceMinimumAgeDays: numericSetting(
+      row,
+      "low_performance_minimum_age_days",
+      DEFAULT_INSIGHT_SETTINGS.lowPerformanceMinimumAgeDays,
+    ),
+    lowPerformanceMinimumImpressions: numericSetting(
+      row,
+      "low_performance_minimum_impressions",
+      DEFAULT_INSIGHT_SETTINGS.lowPerformanceMinimumImpressions,
+    ),
+    lowPerformanceMinimumPosition: numericSetting(
+      row,
+      "low_performance_minimum_position",
+      DEFAULT_INSIGHT_SETTINGS.lowPerformanceMinimumPosition,
+    ),
+  };
+}
+
+function parseTopicClusters(values: unknown[]): TopicClusterSeed[] {
+  const clusters = new Map<number, TopicClusterSeed>();
+  for (const value of values) {
+    const row = asRecord(value, "site topic cluster");
+    const id = requiredNumber(row, "id", "site topic cluster");
+    const cluster = clusters.get(id) ?? {
+      id,
+      label: requiredString(row, "label", "site topic cluster"),
+      terms: [],
+    };
+    cluster.terms.push(requiredString(row, "term", "site topic cluster"));
+    clusters.set(id, cluster);
+  }
+  return [...clusters.values()];
 }
 
 function parseBrandTerm(value: unknown): SiteBrandTermRecord {
@@ -186,7 +321,8 @@ export async function getSiteConfiguration(
   if (!siteRow) return null;
   const site = parseSite(siteRow);
 
-  const [brandTerms, contentRules, sitemaps] = await db.batch([
+  const [brandTerms, contentRules, sitemaps, insightSettings, topicClusters] =
+    await db.batch([
     db
       .prepare(
         `SELECT term, normalized_term, brand_type
@@ -211,9 +347,32 @@ export async function getSiteConfiguration(
          ORDER BY id ASC`,
       )
       .bind(site.id),
+    db
+      .prepare(
+        `SELECT *
+         FROM site_insight_settings
+         WHERE site_id = ?
+         LIMIT 1`,
+      )
+      .bind(site.id),
+    db
+      .prepare(
+        `SELECT c.id, c.label, t.term
+         FROM site_topic_clusters c
+         JOIN site_topic_cluster_terms t ON t.cluster_id = c.id
+         WHERE c.site_id = ? AND c.is_active = 1
+         ORDER BY c.id ASC, t.normalized_term ASC`,
+      )
+      .bind(site.id),
   ]);
 
-  if (!brandTerms.success || !contentRules.success || !sitemaps.success) {
+  if (
+    !brandTerms.success ||
+    !contentRules.success ||
+    !sitemaps.success ||
+    !insightSettings.success ||
+    !topicClusters.success
+  ) {
     throw new Error("Could not load complete site configuration");
   }
 
@@ -222,5 +381,7 @@ export async function getSiteConfiguration(
     brandTerms: (brandTerms.results ?? []).map(parseBrandTerm),
     contentRules: (contentRules.results ?? []).map(parseContentRule),
     sitemaps: (sitemaps.results ?? []).map(parseSitemap),
+    insightSettings: parseInsightSettings(insightSettings.results?.[0]),
+    topicClusters: parseTopicClusters(topicClusters.results ?? []),
   };
 }

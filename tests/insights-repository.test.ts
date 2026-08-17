@@ -83,6 +83,12 @@ function insertDailyRows(database: DatabaseSync, siteId: number): void {
       .run(runId, siteId, date);
     database
       .prepare(
+        `INSERT INTO sync_run_steps (run_id, dimension, status)
+         VALUES (?, 'query_device', 'completed')`,
+      )
+      .run(runId);
+    database
+      .prepare(
         `INSERT INTO daily_site_totals
            (sync_run_id, site_id, date, search_type, clicks, impressions, ctr, position)
          VALUES (?, ?, ?, 'web', ?, ?, ?, ?)`,
@@ -95,6 +101,14 @@ function insertDailyRows(database: DatabaseSync, siteId: number): void {
          VALUES (?, ?, ?, 'web', 'تشک طبی', ?, ?, ?, ?)`,
       )
       .run(runId, siteId, date, 5 + index, 50 + index * 10, 0.1, 10 - index);
+    database
+      .prepare(
+        `INSERT INTO daily_query_device_metrics
+           (sync_run_id, site_id, date, search_type, query, device,
+            clicks, impressions, ctr, position)
+         VALUES (?, ?, ?, 'web', 'تشک طبی', 'MOBILE', ?, ?, ?, ?)`,
+      )
+      .run(runId, siteId, date, 4 + index, 40 + index * 10, 0.1, 10 - index);
     database
       .prepare(
         `INSERT INTO daily_page_metrics
@@ -123,6 +137,9 @@ test("insights repository executes against the real SQLite schema", async () => 
   database.exec(
     readFileSync(new URL("../migrations/0001_multisite_foundation.sql", import.meta.url), "utf8"),
   );
+  database.exec(
+    readFileSync(new URL("../migrations/0002_insight_refinements.sql", import.meta.url), "utf8"),
+  );
   database.exec(readFileSync(new URL("../seeds/0001_digikhab.sql", import.meta.url), "utf8"));
   const site = database.prepare("SELECT id FROM sites WHERE slug = 'digikhab'").get() as {
     id: number;
@@ -133,6 +150,13 @@ test("insights repository executes against the real SQLite schema", async () => 
       `INSERT INTO sitemap_urls
          (site_id, url, inferred_content_type, first_seen_at, last_seen_at)
        VALUES (?, 'https://digikhab.org/product/test/', 'product', '2026-01-01', '2026-08-04')`,
+    )
+    .run(site.id);
+  database
+    .prepare(
+      `INSERT INTO sitemap_urls
+         (site_id, url, inferred_content_type, first_seen_at, last_seen_at)
+       VALUES (?, 'https://digikhab.org/product/invisible/', 'product', '2026-01-01', '2026-08-04')`,
     )
     .run(site.id);
 
@@ -152,13 +176,37 @@ test("insights repository executes against the real SQLite schema", async () => 
   assert.equal(queries[0].current.clicks, 15);
   assert.equal(queries[0].bestPage, "https://digikhab.org/product/test/");
 
+  const queryDevices = await repository.loadQueryDeviceMetrics({
+    siteId: site.id,
+    searchType: "web",
+    startDate: "2026-08-03",
+    endDate: "2026-08-04",
+  });
+  assert.equal(queryDevices.length, 1);
+  assert.equal(queryDevices[0].device, "MOBILE");
+  assert.equal(queryDevices[0].current.clicks, 13);
+
   const pages = await repository.loadPageMetrics(window);
-  assert.equal(pages.length, 1);
-  assert.equal(pages[0].isInSitemap, true);
-  assert.equal(pages[0].contentType, "product");
+  assert.equal(pages.length, 2);
+  const visiblePage = pages.find((page) => page.key.endsWith("/test/"));
+  const invisiblePage = pages.find((page) => page.key.endsWith("/invisible/"));
+  assert.equal(visiblePage?.isInSitemap, true);
+  assert.equal(visiblePage?.contentType, "product");
+  assert.equal(invisiblePage?.current.impressions, 0);
+  assert.equal(invisiblePage?.isInSitemap, true);
 
   const daily = await repository.loadDailyTotals(window);
   assert.equal(daily.length, 4);
+  assert.equal(
+    await repository.completedDateCoverage({
+      siteId: site.id,
+      searchType: "web",
+      startDate: "2026-08-01",
+      endDate: "2026-08-04",
+      expectedDays: 4,
+    }),
+    1,
+  );
   const cannibalization = await repository.loadCannibalizationRows(window);
   assert.equal(cannibalization.length, 0, "candidate is below the 200 impression threshold");
 });

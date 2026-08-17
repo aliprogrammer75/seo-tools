@@ -8,6 +8,7 @@ import {
   findCtrOpportunities,
   findLowPerformancePages,
   findNewRankings,
+  findPeakContentDecay,
   findStrikingDistance,
 } from "@/lib/insights/algorithms.ts";
 import { ctr, percentChange } from "@/lib/insights/metrics.ts";
@@ -26,7 +27,14 @@ import {
   type ContentRule,
   type ContentType,
 } from "@/lib/sites/classification.ts";
-import { shiftIsoDate } from "@/lib/sync/date.ts";
+import {
+  endOfPreviousIsoMonth,
+  isoDateRangeDays,
+  shiftIsoDate,
+  shiftIsoMonth,
+  shiftIsoYear,
+  startOfIsoMonth,
+} from "@/lib/sync/date.ts";
 
 export const dynamic = "force-dynamic";
 
@@ -195,11 +203,35 @@ export async function GET(request: Request): Promise<Response> {
       previousStart,
       previousEnd,
     };
+    const yearOverYearWindow: DateWindowInput = {
+      siteId: configuration.site.id,
+      searchType: configuration.site.default_search_type,
+      currentStart,
+      currentEnd,
+      previousStart: shiftIsoYear(currentStart, -1),
+      previousEnd: shiftIsoYear(currentEnd, -1),
+    };
     const calibrationEnd = previousEnd;
     const calibrationStart = shiftIsoDate(calibrationEnd, -89);
+    const peakEnd = endOfPreviousIsoMonth(currentEnd);
+    const peakStart = startOfIsoMonth(shiftIsoMonth(peakEnd, -12));
+    const peakExpectedDays = isoDateRangeDays(peakStart, peakEnd);
 
-    const [allQueries, allPages, calibrationQueries, cannibalizationRows, dailyTotals] =
-      await Promise.all([
+    const [
+      allQueries,
+      allPages,
+      calibrationQueries,
+      currentQueryDevices,
+      calibrationQueryDevices,
+      yearOverYearPages,
+      monthlyPages,
+      cannibalizationRows,
+      dailyTotals,
+      currentCoverage,
+      previousCoverage,
+      yearOverYearCoverage,
+      peakCoverage,
+    ] = await Promise.all([
         repository.loadQueryMetrics(window),
         repository.loadPageMetrics(window),
         repository.loadCalibrationQueries({
@@ -208,8 +240,55 @@ export async function GET(request: Request): Promise<Response> {
           startDate: calibrationStart,
           endDate: calibrationEnd,
         }),
+        repository.loadQueryDeviceMetrics({
+          siteId: configuration.site.id,
+          searchType: configuration.site.default_search_type,
+          startDate: currentStart,
+          endDate: currentEnd,
+        }),
+        repository.loadQueryDeviceMetrics({
+          siteId: configuration.site.id,
+          searchType: configuration.site.default_search_type,
+          startDate: calibrationStart,
+          endDate: calibrationEnd,
+        }),
+        repository.loadPageMetrics(yearOverYearWindow),
+        repository.loadMonthlyPageMetrics({
+          siteId: configuration.site.id,
+          searchType: configuration.site.default_search_type,
+          startDate: peakStart,
+          endDate: peakEnd,
+        }),
         repository.loadCannibalizationRows(window),
         repository.loadDailyTotals(window),
+        repository.completedDateCoverage({
+          siteId: configuration.site.id,
+          searchType: configuration.site.default_search_type,
+          startDate: currentStart,
+          endDate: currentEnd,
+          expectedDays: days,
+        }),
+        repository.completedDateCoverage({
+          siteId: configuration.site.id,
+          searchType: configuration.site.default_search_type,
+          startDate: previousStart,
+          endDate: previousEnd,
+          expectedDays: days,
+        }),
+        repository.completedDateCoverage({
+          siteId: configuration.site.id,
+          searchType: configuration.site.default_search_type,
+          startDate: yearOverYearWindow.previousStart,
+          endDate: yearOverYearWindow.previousEnd,
+          expectedDays: days,
+        }),
+        repository.completedDateCoverage({
+          siteId: configuration.site.id,
+          searchType: configuration.site.default_search_type,
+          startDate: peakStart,
+          endDate: peakEnd,
+          expectedDays: peakExpectedDays,
+        }),
       ]);
 
     const brandTerms: BrandTerm[] = configuration.brandTerms.map((term) => ({
@@ -248,7 +327,9 @@ export async function GET(request: Request): Promise<Response> {
       rowFromGroup(contentLabels[type], rows),
     );
 
-    const topicClusters = buildTopicClusters(queries).slice(0, 20).map((cluster) => ({
+    const topicClusters = buildTopicClusters(queries, configuration.topicClusters)
+      .slice(0, 20)
+      .map((cluster) => ({
       text: cluster.label,
       clicks: cluster.clicks,
       p_clicks: 0,
@@ -261,6 +342,7 @@ export async function GET(request: Request): Promise<Response> {
       pos_trend: 0,
       click_diff: 0,
       queries: cluster.queries,
+      source: cluster.source,
     }));
     const newRankings = findNewRankings(queries, brandTerms).slice(0, 50).map((row) => ({
       text: row.query,
@@ -276,7 +358,12 @@ export async function GET(request: Request): Promise<Response> {
       click_diff: row.clicks,
       kind: row.kind,
     }));
-    const strikingDistance = findStrikingDistance(allQueries, brandTerms)
+    const settings = configuration.insightSettings;
+    const strikingDistance = findStrikingDistance(allQueries, brandTerms, {
+      minimumPosition: settings.strikingMinimumPosition,
+      maximumPosition: settings.strikingMaximumPosition,
+      minimumImpressions: settings.strikingMinimumImpressions,
+    })
       .slice(0, 150)
       .map((row) => ({
         text: row.query,
@@ -287,10 +374,23 @@ export async function GET(request: Request): Promise<Response> {
         ctr: row.impressions > 0 ? (row.clicks / row.impressions) * 100 : 0,
         opportunityScore: row.opportunityScore,
       }));
+    const bestPages = new Map(allQueries.map((row) => [row.key, row.bestPage]));
+    const currentCtrRows =
+      currentQueryDevices.length > 0
+        ? currentQueryDevices.map((row) => ({ ...row, bestPage: bestPages.get(row.key) }))
+        : allQueries;
+    const calibrationCtrRows =
+      calibrationQueryDevices.length > 0 ? calibrationQueryDevices : calibrationQueries;
     const ctrBenchmark = findCtrOpportunities(
-      allQueries,
-      calibrationQueries,
+      currentCtrRows,
+      calibrationCtrRows,
       brandTerms,
+      {
+        minimumQueryImpressions: settings.ctrMinimumQueryImpressions,
+        minimumBenchmarkImpressions: settings.ctrMinimumBenchmarkImpressions,
+        maximumExpectedRatio: settings.ctrMaximumExpectedRatio,
+        minimumMissedClicks: settings.ctrMinimumMissedClicks,
+      },
     )
       .slice(0, 150)
       .map((row) => ({
@@ -303,8 +403,20 @@ export async function GET(request: Request): Promise<Response> {
         expectedCtr: row.expectedCtr * 100,
         missedClicks: row.missedClicks,
         zScore: row.zScore,
+        device: row.device,
       }));
-    const contentDecay = findContentDecay(allPages).slice(0, 150).map((row) => ({
+    const decayOptions = {
+      minimumPreviousClicks: settings.decayMinimumPreviousClicks,
+      minimumLostClicks: settings.decayMinimumLostClicks,
+      minimumDecayRatio: settings.decayMinimumRatio,
+      minimumDataCoverage: settings.minimumDataCoverage,
+      currentDataCoverage: currentCoverage,
+    };
+    const contentDecay = findContentDecay(allPages, {
+      ...decayOptions,
+      comparisonDataCoverage: previousCoverage,
+      comparison: "previous_period",
+    }).slice(0, 150).map((row) => ({
       text: row.page,
       clicks: row.currentClicks,
       p_clicks: row.previousClicks,
@@ -313,8 +425,46 @@ export async function GET(request: Request): Promise<Response> {
       decayScore: row.score,
       cause: row.cause,
       zScore: row.zScore,
+      comparison: row.comparison,
     }));
-    const zombies = findLowPerformancePages(allPages).slice(0, 500).map((row) => ({
+    const contentDecaySeasonal = findContentDecay(yearOverYearPages, {
+      ...decayOptions,
+      comparisonDataCoverage: yearOverYearCoverage,
+      comparison: "year_over_year",
+    }).slice(0, 150).map((row) => ({
+      text: row.page,
+      clicks: row.currentClicks,
+      p_clicks: row.previousClicks,
+      click_diff: -row.lostClicks,
+      decayPercent: row.decayPercent,
+      decayScore: row.score,
+      cause: row.cause,
+      zScore: row.zScore,
+      comparison: row.comparison,
+    }));
+    const contentDecayPeak = findPeakContentDecay(monthlyPages, peakEnd.slice(0, 7), {
+      minimumPreviousClicks: settings.decayMinimumPreviousClicks,
+      minimumLostClicks: settings.decayMinimumLostClicks,
+      minimumDecayRatio: settings.decayMinimumRatio,
+      minimumDataCoverage: settings.minimumDataCoverage,
+      currentDataCoverage: peakCoverage,
+      comparisonDataCoverage: peakCoverage,
+    }).slice(0, 150).map((row) => ({
+      text: row.page,
+      clicks: row.currentClicks,
+      p_clicks: row.previousClicks,
+      click_diff: -row.lostClicks,
+      decayPercent: row.decayPercent,
+      decayScore: row.score,
+      cause: row.cause,
+      zScore: row.zScore,
+      comparison: row.comparison,
+    }));
+    const zombies = findLowPerformancePages(allPages, {
+      minimumAgeDays: settings.lowPerformanceMinimumAgeDays,
+      minimumShownImpressions: settings.lowPerformanceMinimumImpressions,
+      minimumWeakPosition: settings.lowPerformanceMinimumPosition,
+    }).slice(0, 500).map((row) => ({
       text: row.page,
       clicks: 0,
       impressions: row.impressions,
@@ -322,8 +472,14 @@ export async function GET(request: Request): Promise<Response> {
       confidence: row.confidence,
       action: row.action,
       reason: row.reason,
+      category: row.category,
     }));
-    const cannibalizationData = findCannibalization(cannibalizationRows, brandTerms)
+    const cannibalizationData = findCannibalization(cannibalizationRows, brandTerms, {
+      minimumQueryImpressions: settings.cannibalizationMinimumQueryImpressions,
+      minimumPageImpressions: settings.cannibalizationMinimumPageImpressions,
+      minimumPageShare: settings.cannibalizationMinimumPageShare,
+      minimumWinnerSwitchRate: settings.cannibalizationMinimumSwitchRate,
+    })
       .slice(0, 100)
       .map((row, index) => ({ id: index + 1, ...row }));
 
@@ -354,6 +510,25 @@ export async function GET(request: Request): Promise<Response> {
         previousEnd,
         calibrationStart,
         calibrationEnd,
+        coverage: {
+          current: currentCoverage,
+          previous: previousCoverage,
+          yearOverYear: yearOverYearCoverage,
+          minimumRequired: settings.minimumDataCoverage,
+        },
+        ctrSegmentedByDevice: currentQueryDevices.length > 0,
+        yearOverYear: {
+          start: yearOverYearWindow.previousStart,
+          end: yearOverYearWindow.previousEnd,
+          available: yearOverYearCoverage >= settings.minimumDataCoverage,
+        },
+        peakComparison: {
+          start: peakStart,
+          end: peakEnd,
+          latestMonth: peakEnd.slice(0, 7),
+          coverage: peakCoverage,
+          available: peakCoverage >= settings.minimumDataCoverage,
+        },
         queryDetailMayBeIncomplete: true,
         warning:
           "Google ممکن است هنگام گروه‌بندی بر اساس query/page بخشی از ردیف‌های کم‌حجم را حذف کند؛ آمار کل از جدول totals محاسبه شده است.",
@@ -370,6 +545,8 @@ export async function GET(request: Request): Promise<Response> {
         strikingDistance,
         ctrBenchmark,
         contentDecay,
+        contentDecaySeasonal,
+        contentDecayPeak,
         zombies,
       },
     });

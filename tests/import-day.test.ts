@@ -41,7 +41,14 @@ class MemoryRepository implements SyncRepository {
   failed?: SyncDimension;
 
   constructor() {
-    for (const dimension of ["totals", "query", "page", "device", "query_page"] as const) {
+    for (const dimension of [
+      "totals",
+      "query",
+      "page",
+      "device",
+      "query_device",
+      "query_page",
+    ] as const) {
       this.steps.set(dimension, {
         dimension,
         status: "pending",
@@ -110,7 +117,7 @@ function row(keys: string[] = []): SearchAnalyticsResponse {
   return { rows: [{ keys, clicks: 2, impressions: 20, ctr: 0.1, position: 4 }] };
 }
 
-test("completes all five dimensions before completing the run", async () => {
+test("completes all six dimensions before completing the run", async () => {
   const repository = new MemoryRepository();
   const requests: SearchAnalyticsRequest[] = [];
   const searchConsole = {
@@ -129,9 +136,16 @@ test("completes all five dimensions before completing the run", async () => {
   });
 
   assert.equal(result.status, "completed");
-  assert.equal(result.completedSteps.length, 5);
+  assert.equal(result.completedSteps.length, 6);
   assert.equal(repository.run.status, "completed");
-  assert.deepEqual(repository.resetCalls, ["totals", "query", "page", "device", "query_page"]);
+  assert.deepEqual(repository.resetCalls, [
+    "totals",
+    "query",
+    "page",
+    "device",
+    "query_device",
+    "query_page",
+  ]);
   assert.ok(requests.every((request) => request.dataState === "final"));
   assert.ok(requests.every((request) => request.type === "web"));
 });
@@ -172,8 +186,33 @@ test("resumes a failed run without re-downloading completed dimensions", async (
 
   await importSearchConsoleDay({ site, date: "2026-08-10", repository, searchConsole });
 
-  assert.deepEqual(requestedDimensions, ["page", "device", "query,page"]);
-  assert.deepEqual(repository.resetCalls, ["page", "device", "query_page"]);
+  assert.deepEqual(requestedDimensions, ["page", "device", "query,device", "query,page"]);
+  assert.deepEqual(repository.resetCalls, ["page", "device", "query_device", "query_page"]);
+});
+
+test("backfills a newly added dimension on an otherwise completed run", async () => {
+  const repository = new MemoryRepository();
+  repository.run.status = "completed";
+  for (const step of repository.steps.values()) step.status = "completed";
+  repository.steps.get("query_device")!.status = "pending";
+  const requestedDimensions: string[] = [];
+  const searchConsole = {
+    async queryPage(request: SearchAnalyticsRequest): Promise<SearchAnalyticsResponse> {
+      requestedDimensions.push(request.dimensions?.join(",") ?? "");
+      return row(request.dimensions?.map((dimension) => `${dimension}-value`) ?? []);
+    },
+  };
+
+  const result = await importSearchConsoleDay({
+    site,
+    date: "2026-08-10",
+    repository,
+    searchConsole,
+  });
+
+  assert.deepEqual(requestedDimensions, ["query,device"]);
+  assert.equal(result.status, "completed");
+  assert.equal(repository.run.status, "completed");
 });
 
 test("rejects impossible calendar dates before creating a run", async () => {

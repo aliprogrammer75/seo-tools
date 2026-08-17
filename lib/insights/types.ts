@@ -29,3 +29,20 @@ export interface PageMetric extends PeriodMetric, SitemapPageSignal {}
 export interface QueryMetric extends PeriodMetric {
   bestPage?: string;
 }
+
+export type SearchDevice = "DESKTOP" | "MOBILE" | "TABLET" | "UNKNOWN";
+
+export interface QueryDeviceMetric extends QueryMetric {
+  device: SearchDevice;
+}
+
+export interface TopicClusterSeed {
+  id?: number;
+  label: string;
+  terms: string[];
+}
+
+export interface MonthlyPageMetric extends Metrics {
+  page: string;
+  month: string;
+}

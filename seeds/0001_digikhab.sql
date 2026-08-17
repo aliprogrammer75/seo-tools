@@ -24,9 +24,13 @@ WHERE slug = 'digikhab';
 INSERT OR IGNORE INTO site_brand_terms (site_id, term, normalized_term, brand_type)
 SELECT id, 'دیجی خواب', 'دیجی خواب', 'site' FROM sites WHERE slug = 'digikhab';
 INSERT OR IGNORE INTO site_brand_terms (site_id, term, normalized_term, brand_type)
+SELECT id, 'دیجی‌خواب', 'دیجی خواب', 'site' FROM sites WHERE slug = 'digikhab';
+INSERT OR IGNORE INTO site_brand_terms (site_id, term, normalized_term, brand_type)
 SELECT id, 'digikhab', 'digikhab', 'site' FROM sites WHERE slug = 'digikhab';
 INSERT OR IGNORE INTO site_brand_terms (site_id, term, normalized_term, brand_type)
 SELECT id, 'digi khab', 'digi khab', 'site' FROM sites WHERE slug = 'digikhab';
+INSERT OR IGNORE INTO site_brand_terms (site_id, term, normalized_term, brand_type)
+SELECT id, 'digikhab.org', 'digikhab.org', 'site' FROM sites WHERE slug = 'digikhab';
 INSERT OR IGNORE INTO site_brand_terms (site_id, term, normalized_term, brand_type)
 SELECT id, 'مبلیران', 'مبلیران', 'product' FROM sites WHERE slug = 'digikhab';
 INSERT OR IGNORE INTO site_brand_terms (site_id, term, normalized_term, brand_type)

@@ -3,7 +3,13 @@ import type {
   SearchAnalyticsResponse,
 } from "../search-console/pagination.ts";
 
-export type SyncDimension = "totals" | "query" | "page" | "device" | "query_page";
+export type SyncDimension =
+  | "totals"
+  | "query"
+  | "page"
+  | "device"
+  | "query_device"
+  | "query_page";
 export type SyncStatus = "pending" | "running" | "completed" | "failed";
 export type SyncRequestedBy = "cron" | "manual" | "backfill";
 
