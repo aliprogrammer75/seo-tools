@@ -95,6 +95,7 @@ CREATE TABLE IF NOT EXISTS sync_run_steps (
 );
 
 CREATE TABLE IF NOT EXISTS daily_site_totals (
+    sync_run_id TEXT PRIMARY KEY REFERENCES sync_runs(id) ON DELETE CASCADE,
     site_id INTEGER NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
     date TEXT NOT NULL,
     search_type TEXT NOT NULL DEFAULT 'web',
@@ -102,12 +103,12 @@ CREATE TABLE IF NOT EXISTS daily_site_totals (
     impressions INTEGER NOT NULL DEFAULT 0,
     ctr REAL NOT NULL DEFAULT 0,
     position REAL NOT NULL DEFAULT 0,
-    imported_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (site_id, date, search_type)
+    imported_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS daily_query_metrics (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    sync_run_id TEXT NOT NULL REFERENCES sync_runs(id) ON DELETE CASCADE,
     site_id INTEGER NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
     date TEXT NOT NULL,
     search_type TEXT NOT NULL DEFAULT 'web',
@@ -117,11 +118,12 @@ CREATE TABLE IF NOT EXISTS daily_query_metrics (
     ctr REAL NOT NULL DEFAULT 0,
     position REAL NOT NULL DEFAULT 0,
     imported_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE (site_id, date, search_type, query)
+    UNIQUE (sync_run_id, query)
 );
 
 CREATE TABLE IF NOT EXISTS daily_page_metrics (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    sync_run_id TEXT NOT NULL REFERENCES sync_runs(id) ON DELETE CASCADE,
     site_id INTEGER NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
     date TEXT NOT NULL,
     search_type TEXT NOT NULL DEFAULT 'web',
@@ -131,11 +133,12 @@ CREATE TABLE IF NOT EXISTS daily_page_metrics (
     ctr REAL NOT NULL DEFAULT 0,
     position REAL NOT NULL DEFAULT 0,
     imported_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE (site_id, date, search_type, page)
+    UNIQUE (sync_run_id, page)
 );
 
 CREATE TABLE IF NOT EXISTS daily_query_page_metrics (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    sync_run_id TEXT NOT NULL REFERENCES sync_runs(id) ON DELETE CASCADE,
     site_id INTEGER NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
     date TEXT NOT NULL,
     search_type TEXT NOT NULL DEFAULT 'web',
@@ -146,11 +149,12 @@ CREATE TABLE IF NOT EXISTS daily_query_page_metrics (
     ctr REAL NOT NULL DEFAULT 0,
     position REAL NOT NULL DEFAULT 0,
     imported_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE (site_id, date, search_type, query, page)
+    UNIQUE (sync_run_id, query, page)
 );
 
 CREATE TABLE IF NOT EXISTS daily_device_metrics (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    sync_run_id TEXT NOT NULL REFERENCES sync_runs(id) ON DELETE CASCADE,
     site_id INTEGER NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
     date TEXT NOT NULL,
     search_type TEXT NOT NULL DEFAULT 'web',
@@ -160,7 +164,7 @@ CREATE TABLE IF NOT EXISTS daily_device_metrics (
     ctr REAL NOT NULL DEFAULT 0,
     position REAL NOT NULL DEFAULT 0,
     imported_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE (site_id, date, search_type, device)
+    UNIQUE (sync_run_id, device)
 );
 
 CREATE TABLE IF NOT EXISTS sitemap_urls (
@@ -179,6 +183,8 @@ CREATE TABLE IF NOT EXISTS sitemap_urls (
 
 CREATE INDEX IF NOT EXISTS idx_sync_runs_site_date
     ON sync_runs(site_id, data_date DESC, status);
+CREATE INDEX IF NOT EXISTS idx_sync_runs_completed
+    ON sync_runs(site_id, status, data_date DESC);
 CREATE INDEX IF NOT EXISTS idx_query_metrics_site_date
     ON daily_query_metrics(site_id, date DESC);
 CREATE INDEX IF NOT EXISTS idx_query_metrics_site_query_date
