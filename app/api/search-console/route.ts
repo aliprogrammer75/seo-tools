@@ -1,251 +1,556 @@
-import { NextResponse } from 'next/server';
+import { getSiteConfiguration } from "@/lib/db/sites.ts";
+import { ApiError, errorResponse } from "@/lib/http/api-error.ts";
+import { requireInternalIdentity } from "@/lib/http/auth.ts";
+import {
+  buildTopicClusters,
+  findCannibalization,
+  findContentDecay,
+  findCtrOpportunities,
+  findLowPerformancePages,
+  findNewRankings,
+  findPeakContentDecay,
+  findStrikingDistance,
+} from "@/lib/insights/algorithms.ts";
+import { ctr, percentChange } from "@/lib/insights/metrics.ts";
+import {
+  InsightsRepository,
+  type DailyTotal,
+  type DateWindowInput,
+} from "@/lib/insights/repository.ts";
+import type { Metrics, PageMetric, QueryMetric } from "@/lib/insights/types.ts";
+import { getAppEnv } from "@/lib/runtime/cloudflare.ts";
+import {
+  classifyBrandQuery,
+  classifyContent,
+  normalizeSearchText,
+  type BrandTerm,
+  type ContentRule,
+  type ContentType,
+} from "@/lib/sites/classification.ts";
+import {
+  endOfPreviousIsoMonth,
+  isoDateRangeDays,
+  shiftIsoDate,
+  shiftIsoMonth,
+  shiftIsoYear,
+  startOfIsoMonth,
+} from "@/lib/sync/date.ts";
 
-export const dynamic = 'force-dynamic';
+export const dynamic = "force-dynamic";
 
-export async function GET(request: Request) {
+function trend(current: number, previous: number): number | "∞" {
+  const change = percentChange(current, previous);
+  return change === null ? "∞" : change * 100;
+}
+
+function legacyRow(row: QueryMetric | PageMetric, text = row.key) {
+  const currentCtr = ctr(row.current) * 100;
+  const previousCtr = ctr(row.previous) * 100;
+  return {
+    text,
+    p_clicks: row.previous.clicks,
+    clicks: row.current.clicks,
+    clicks_trend: trend(row.current.clicks, row.previous.clicks),
+    impressions: row.current.impressions,
+    imp_trend: trend(row.current.impressions, row.previous.impressions),
+    ctr: currentCtr,
+    ctr_trend: trend(currentCtr, previousCtr),
+    position: row.current.position,
+    pos_trend:
+      row.previous.position === 0
+        ? row.current.position > 0
+          ? "∞"
+          : 0
+        : row.previous.position - row.current.position,
+    trendUp: row.current.clicks > row.previous.clicks,
+    click_diff: row.current.clicks - row.previous.clicks,
+  };
+}
+
+function aggregateMetrics(rows: Array<QueryMetric | PageMetric>, period: "current" | "previous"): Metrics {
+  const metrics = rows.map((row) => row[period]);
+  const impressions = metrics.reduce((sum, row) => sum + row.impressions, 0);
+  return {
+    clicks: metrics.reduce((sum, row) => sum + row.clicks, 0),
+    impressions,
+    position:
+      impressions > 0
+        ? metrics.reduce((sum, row) => sum + row.position * row.impressions, 0) /
+          impressions
+        : 0,
+  };
+}
+
+function rowFromGroup(
+  name: string,
+  rows: PageMetric[],
+): ReturnType<typeof legacyRow> {
+  return legacyRow(
+    {
+      key: name,
+      current: aggregateMetrics(rows, "current"),
+      previous: aggregateMetrics(rows, "previous"),
+    },
+    name,
+  );
+}
+
+function buildChartData(daily: DailyTotal[], window: DateWindowInput, days: number) {
+  const byDate = new Map(daily.map((row) => [row.date, row]));
+  return Array.from({ length: days }, (_, index) => {
+    const date = shiftIsoDate(window.currentStart, index);
+    const previousDate = shiftIsoDate(window.previousStart, index);
+    const current = byDate.get(date);
+    const previous = byDate.get(previousDate);
+    return {
+      date,
+      prevDate: previousDate,
+      clicks: current?.clicks ?? null,
+      p_clicks: previous?.clicks ?? null,
+      impressions: current?.impressions ?? null,
+      p_imp: previous?.impressions ?? null,
+      ctr:
+        current && current.impressions > 0
+          ? (current.clicks / current.impressions) * 100
+          : null,
+      p_ctr:
+        previous && previous.impressions > 0
+          ? (previous.clicks / previous.impressions) * 100
+          : null,
+      position: current?.position ?? null,
+      p_pos: previous?.position ?? null,
+    };
+  });
+}
+
+function filterQueries(rows: QueryMetric[], url: URL, brandTerms: BrandTerm[]): QueryMetric[] {
+  const excludeBrand = url.searchParams.get("excludeBrand") !== "false";
+  const preset = url.searchParams.get("qPreset") || "All";
+  const search = normalizeSearchText(url.searchParams.get("qSearch") ?? "");
+  const questionWords = ["چگونه", "چطور", "چرا", "چیست", "آیا", "کجا", "کدام", "چه"];
+  const purchaseWords = ["خرید", "قیمت", "هزینه", "ارزان", "تخفیف", "فروش", "سفارش"];
+
+  return rows.filter((row) => {
+    const normalized = normalizeSearchText(row.key);
+    if (excludeBrand && classifyBrandQuery(row.key, brandTerms) === "site") return false;
+    if (search && !normalized.includes(search)) return false;
+    if (preset === "Questions" && !questionWords.some((word) => normalized.includes(word))) {
+      return false;
+    }
+    if (preset === "Buy" && !purchaseWords.some((word) => normalized.includes(word))) {
+      return false;
+    }
+    if (preset === "LongTail" && normalized.split(" ").length < 4) return false;
+    return true;
+  });
+}
+
+function filterPages(
+  rows: PageMetric[],
+  url: URL,
+  contentType: (row: PageMetric) => ContentType,
+): PageMetric[] {
+  const preset = url.searchParams.get("pPreset") || "All";
+  const search = url.searchParams.get("pSearch")?.trim().toLowerCase() ?? "";
+  return rows.filter((row) => {
+    if (search && !row.key.toLowerCase().includes(search)) return false;
+    const type = contentType(row);
+    if (preset === "Blog" && type !== "article" && type !== "article_archive") return false;
+    if (preset === "Product" && type !== "product") return false;
+    if (preset === "Deep") {
+      try {
+        if (new URL(row.key).pathname.split("/").filter(Boolean).length < 4) return false;
+      } catch {
+        return false;
+      }
+    }
+    return true;
+  });
+}
+
+export async function GET(request: Request): Promise<Response> {
   try {
-    const { searchParams } = new URL(request.url);
-    const daysParam = parseInt(searchParams.get('days') || '14', 10);
-    
-    const excludeBrand = searchParams.get('excludeBrand') === 'true';
-    const brandsStr = searchParams.get('brands') || '';
-    const qPreset = searchParams.get('qPreset') || 'All';
-    const qSearch = searchParams.get('qSearch') || '';
-    const pPreset = searchParams.get('pPreset') || 'All';
-    const pSearch = searchParams.get('pSearch') || '';
-
-    const { CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_DATABASE_ID, CLOUDFLARE_API_TOKEN } = process.env;
-    const d1Url = `https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/d1/database/${CLOUDFLARE_DATABASE_ID}/query`;
-    
-    const fetchFromD1 = async (sqlQuery: string) => {
-      const response = await fetch(d1Url, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${CLOUDFLARE_API_TOKEN}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sql: sqlQuery })
-      });
-      if (!response.ok) throw new Error(`Cloudflare Error`);
-      const result = await response.json();
-      if (!result.success) throw new Error(result.errors[0]?.message);
-      return result.result[0].results || [];
-    };
-
-    const maxDateRes = await fetchFromD1("SELECT MAX(date) as maxDate FROM search_queries");
-    const maxDate = maxDateRes[0]?.maxDate;
-    if (!maxDate) return NextResponse.json({ success: false, error: "دیتابیس خالی است." }, { status: 400 });
-    
-    const dMax = new Date(maxDate);
-    const dCurrentStart = new Date(dMax); dCurrentStart.setDate(dCurrentStart.getDate() - (daysParam - 1));
-    const dPrevStart = new Date(dCurrentStart); dPrevStart.setDate(dPrevStart.getDate() - daysParam);
-
-    const cEnd = dMax.toISOString().split('T')[0];
-    const cStart = dCurrentStart.toISOString().split('T')[0];
-    const pStart = dPrevStart.toISOString().split('T')[0];
-
-    const buildKwCond = (colName: string) => {
-      let cond = "1=1";
-      if (excludeBrand && brandsStr) {
-        const brands = brandsStr.split(',').map(b => b.trim()).filter(Boolean);
-        brands.forEach(b => { cond += ` AND ${colName} NOT LIKE '%${b}%'`; });
-      }
-      if (qPreset === 'Questions') {
-        const qws = ['چگونه','چطور','چرا','چیست','آیا','کجا','کی','کدام','چه','فرق','تفاوت','آموزش','راهنما'];
-        cond += ` AND (${qws.map(w => `${colName} LIKE '%${w}%'`).join(' OR ')})`;
-      } else if (qPreset === 'Buy') {
-        const bws = ['خرید','قیمت','هزینه','ارزان','تخفیف','فروشگاه','سفارش','فروش','لیست'];
-        cond += ` AND (${bws.map(w => `${colName} LIKE '%${w}%'`).join(' OR ')})`;
-      } else if (qPreset === 'LongTail') {
-        cond += ` AND ${colName} LIKE '% % % %'`;
-      }
-      if (qSearch) cond += ` AND ${colName} LIKE '%${qSearch}%'`;
-      return cond;
-    };
-
-    const kwCond = buildKwCond('keyword');
-
-    let pgCondition = "1=1";
-    if (pPreset === 'Blog') pgCondition += ` AND (url LIKE '%/blog/%' OR url LIKE '%/mag/%' OR url LIKE '%/article/%')`;
-    else if (pPreset === 'Product') pgCondition += ` AND (url LIKE '%/product/%' OR url LIKE '%/shop/%' OR url LIKE '%/item/%')`;
-    else if (pPreset === 'Deep') pgCondition += ` AND url LIKE '%/%/%/%/%'`;
-    if (pSearch) pgCondition += ` AND url LIKE '%${pSearch}%'`;
-
-    // =========================================================================
-    // 🌟 استراتژی هوشمند برای تطابق ۱۰۰ درصدی آمار نمودار با سرچ کنسول 
-    // =========================================================================
-    const hasQueryFilter = (excludeBrand && brandsStr.trim() !== '') || qPreset !== 'All' || qSearch.trim() !== '';
-    const hasPageFilter = pPreset !== 'All' || pSearch.trim() !== '';
-
-    let chartQuery = "";
-    let totalsQuery = "";
-
-    if (hasQueryFilter) {
-      // اگر فیلتر کلمات روشن است، آمار با حذف کوئری‌های ناشناس محاسبه می‌شود
-      chartQuery = `SELECT date, SUM(clicks) as clicks, SUM(impressions) as impressions, SUM(position*impressions)/NULLIF(SUM(impressions),0) as position FROM search_queries WHERE date >= '${pStart}' AND date <= '${cEnd}' AND ${kwCond} GROUP BY date ORDER BY date ASC`;
-      totalsQuery = `SELECT 'totals' as text, SUM(CASE WHEN date >= '${cStart}' THEN clicks ELSE 0 END) as c_clicks, SUM(CASE WHEN date < '${cStart}' THEN clicks ELSE 0 END) as p_clicks, SUM(CASE WHEN date >= '${cStart}' THEN impressions ELSE 0 END) as c_imp, SUM(CASE WHEN date < '${cStart}' THEN impressions ELSE 0 END) as p_imp, SUM(CASE WHEN date >= '${cStart}' THEN position * impressions ELSE 0 END) / NULLIF(SUM(CASE WHEN date >= '${cStart}' THEN impressions ELSE 0 END), 0) as c_pos, SUM(CASE WHEN date < '${cStart}' THEN position * impressions ELSE 0 END) / NULLIF(SUM(CASE WHEN date < '${cStart}' THEN impressions ELSE 0 END), 0) as p_pos FROM search_queries WHERE date >= '${pStart}' AND date <= '${cEnd}' AND ${kwCond}`;
-    } else if (hasPageFilter) {
-      // اگر فیلتر صفحات روشن است، از جدول صفحات می‌خوانیم (که دیتای کامل‌تری نسبت به کلمات دارد)
-      chartQuery = `SELECT date, SUM(clicks) as clicks, SUM(impressions) as impressions, SUM(position*impressions)/NULLIF(SUM(impressions),0) as position FROM search_pages WHERE date >= '${pStart}' AND date <= '${cEnd}' AND ${pgCondition} GROUP BY date ORDER BY date ASC`;
-      totalsQuery = `SELECT 'totals' as text, SUM(CASE WHEN date >= '${cStart}' THEN clicks ELSE 0 END) as c_clicks, SUM(CASE WHEN date < '${cStart}' THEN clicks ELSE 0 END) as p_clicks, SUM(CASE WHEN date >= '${cStart}' THEN impressions ELSE 0 END) as c_imp, SUM(CASE WHEN date < '${cStart}' THEN impressions ELSE 0 END) as p_imp, SUM(CASE WHEN date >= '${cStart}' THEN position * impressions ELSE 0 END) / NULLIF(SUM(CASE WHEN date >= '${cStart}' THEN impressions ELSE 0 END), 0) as c_pos, SUM(CASE WHEN date < '${cStart}' THEN position * impressions ELSE 0 END) / NULLIF(SUM(CASE WHEN date < '${cStart}' THEN impressions ELSE 0 END), 0) as p_pos FROM search_pages WHERE date >= '${pStart}' AND date <= '${cEnd}' AND ${pgCondition}`;
-    } else {
-      // ✨ اگر فیلتری نداریم، دیتای خام و ۱۰۰٪ دقیقِ گوگل را از جدول Totals می‌خوانیم
-      chartQuery = `SELECT date, SUM(clicks) as clicks, SUM(impressions) as impressions, SUM(position*impressions)/NULLIF(SUM(impressions),0) as position FROM site_totals WHERE date >= '${pStart}' AND date <= '${cEnd}' GROUP BY date ORDER BY date ASC`;
-      totalsQuery = `SELECT 'totals' as text, SUM(CASE WHEN date >= '${cStart}' THEN clicks ELSE 0 END) as c_clicks, SUM(CASE WHEN date < '${cStart}' THEN clicks ELSE 0 END) as p_clicks, SUM(CASE WHEN date >= '${cStart}' THEN impressions ELSE 0 END) as c_imp, SUM(CASE WHEN date < '${cStart}' THEN impressions ELSE 0 END) as p_imp, SUM(CASE WHEN date >= '${cStart}' THEN position * impressions ELSE 0 END) / NULLIF(SUM(CASE WHEN date >= '${cStart}' THEN impressions ELSE 0 END), 0) as c_pos, SUM(CASE WHEN date < '${cStart}' THEN position * impressions ELSE 0 END) / NULLIF(SUM(CASE WHEN date < '${cStart}' THEN impressions ELSE 0 END), 0) as p_pos FROM site_totals WHERE date >= '${pStart}' AND date <= '${cEnd}'`;
+    const env = await getAppEnv();
+    requireInternalIdentity(request, env);
+    const url = new URL(request.url);
+    const siteSlug = url.searchParams.get("site")?.trim() || "digikhab";
+    const days = Number(url.searchParams.get("days") ?? "14");
+    if (!Number.isInteger(days) || days < 7 || days > 489) {
+      throw new ApiError(400, "INVALID_RANGE", "بازه باید بین ۷ تا ۴۸۹ روز باشد.");
     }
 
-    const queriesQuery = `SELECT keyword as text, SUM(CASE WHEN date >= '${cStart}' THEN clicks ELSE 0 END) as c_clicks, SUM(CASE WHEN date < '${cStart}' THEN clicks ELSE 0 END) as p_clicks, SUM(CASE WHEN date >= '${cStart}' THEN impressions ELSE 0 END) as c_imp, SUM(CASE WHEN date < '${cStart}' THEN impressions ELSE 0 END) as p_imp, SUM(CASE WHEN date >= '${cStart}' THEN position * impressions ELSE 0 END) / NULLIF(SUM(CASE WHEN date >= '${cStart}' THEN impressions ELSE 0 END), 0) as c_pos, SUM(CASE WHEN date < '${cStart}' THEN position * impressions ELSE 0 END) / NULLIF(SUM(CASE WHEN date < '${cStart}' THEN impressions ELSE 0 END), 0) as p_pos FROM search_queries WHERE date >= '${pStart}' AND date <= '${cEnd}' AND ${kwCond} GROUP BY keyword HAVING c_clicks > 0 OR p_clicks > 0 OR c_imp > 10 ORDER BY (c_clicks + p_clicks) DESC LIMIT 500`;
-    const pagesQuery = `SELECT url as text, SUM(CASE WHEN date >= '${cStart}' THEN clicks ELSE 0 END) as c_clicks, SUM(CASE WHEN date < '${cStart}' THEN clicks ELSE 0 END) as p_clicks, SUM(CASE WHEN date >= '${cStart}' THEN impressions ELSE 0 END) as c_imp, SUM(CASE WHEN date < '${cStart}' THEN impressions ELSE 0 END) as p_imp, SUM(CASE WHEN date >= '${cStart}' THEN position * impressions ELSE 0 END) / NULLIF(SUM(CASE WHEN date >= '${cStart}' THEN impressions ELSE 0 END), 0) as c_pos, SUM(CASE WHEN date < '${cStart}' THEN position * impressions ELSE 0 END) / NULLIF(SUM(CASE WHEN date < '${cStart}' THEN impressions ELSE 0 END), 0) as p_pos FROM search_pages WHERE date >= '${pStart}' AND date <= '${cEnd}' AND ${pgCondition} GROUP BY url HAVING c_clicks > 0 OR p_clicks > 0 OR c_imp > 10 ORDER BY (c_clicks + p_clicks) DESC LIMIT 500`;
-    const clusterQuery = `SELECT keyword as text, SUM(CASE WHEN date >= '${cStart}' THEN clicks ELSE 0 END) as c_clicks, SUM(CASE WHEN date < '${cStart}' THEN clicks ELSE 0 END) as p_clicks, SUM(CASE WHEN date >= '${cStart}' THEN impressions ELSE 0 END) as c_imp, SUM(CASE WHEN date < '${cStart}' THEN impressions ELSE 0 END) as p_imp FROM search_queries WHERE date >= '${pStart}' AND date <= '${cEnd}' AND ${kwCond} GROUP BY keyword HAVING c_clicks > 0 OR p_clicks > 0 ORDER BY c_clicks DESC LIMIT 3000`;
-
-    // 🧠 کوئری‌های خام برای ابزارهای Optimize
-    const optimizeQueriesSql = `SELECT keyword as text, SUM(clicks) as c_clicks, SUM(impressions) as c_imp, SUM(position*impressions)/NULLIF(SUM(impressions),0) as c_pos FROM search_queries WHERE date >= '${cStart}' AND date <= '${cEnd}' GROUP BY keyword HAVING SUM(impressions) > 10 LIMIT 5000`;
-    const optimizePagesSql = `SELECT url as text, SUM(CASE WHEN date >= '${cStart}' THEN clicks ELSE 0 END) as c_clicks, SUM(CASE WHEN date < '${cStart}' THEN clicks ELSE 0 END) as p_clicks, SUM(CASE WHEN date >= '${cStart}' THEN impressions ELSE 0 END) as c_imp FROM search_pages WHERE date >= '${pStart}' AND date <= '${cEnd}' GROUP BY url HAVING SUM(CASE WHEN date >= '${cStart}' THEN impressions ELSE 0 END) > 10 OR SUM(CASE WHEN date < '${cStart}' THEN clicks ELSE 0 END) > 10 LIMIT 5000`;
-    const canniQuery = `SELECT query, page, SUM(clicks) as c_clicks, SUM(impressions) as c_imp, SUM(position*impressions)/NULLIF(SUM(impressions),0) as c_pos FROM search_query_pages WHERE date >= '${cStart}' AND date <= '${cEnd}' GROUP BY query, page HAVING SUM(impressions) > 10 LIMIT 5000`;
-
-    // اجرای همزمان 🚀
-    const [rawChartData, totalsRes, queriesRes, pagesRes, clusterRaw, optimizeQueriesRaw, optimizePagesRaw, cannibalizationRaw] = await Promise.all([
-      fetchFromD1(chartQuery), fetchFromD1(totalsQuery), fetchFromD1(queriesQuery), fetchFromD1(pagesQuery), fetchFromD1(clusterQuery),
-      fetchFromD1(optimizeQueriesSql), fetchFromD1(optimizePagesSql), fetchFromD1(canniQuery)
-    ]);
-
-    const chartData = [];
-    const chunkSize = daysParam > 90 ? 7 : 1;
-    for (let i = 0; i < daysParam; i += chunkSize) {
-      let c_clicks = 0, p_clicks = 0, c_imp = 0, p_imp = 0, c_pos_sum = 0, p_pos_sum = 0;
-      let cDateStr = ''; let pDateStr = '';
-      for (let j = 0; j < chunkSize && (i + j) < daysParam; j++) {
-        const dCurr = new Date(dCurrentStart); dCurr.setDate(dCurr.getDate() + i + j);
-        const cdStr = dCurr.toISOString().split('T')[0]; if (j === 0) cDateStr = cdStr;
-        const dPrev = new Date(dPrevStart); dPrev.setDate(dPrev.getDate() + i + j);
-        const pdStr = dPrev.toISOString().split('T')[0]; if (j === 0) pDateStr = pdStr;
-
-        const cData = rawChartData.find((r:any) => r.date === cdStr); const pData = rawChartData.find((r:any) => r.date === pdStr);
-        if (cData) { c_clicks += cData.clicks || 0; c_imp += cData.impressions || 0; c_pos_sum += (cData.position || 0) * (cData.impressions || 0); }
-        if (pData) { p_clicks += pData.clicks || 0; p_imp += pData.impressions || 0; p_pos_sum += (pData.position || 0) * (pData.impressions || 0); }
-      }
-      chartData.push({
-        date: cDateStr, prevDate: pDateStr, clicks: c_clicks || null, p_clicks: p_clicks || null, impressions: c_imp || null, p_imp: p_imp || null,
-        ctr: c_imp > 0 ? (c_clicks / c_imp) * 100 : null, p_ctr: p_imp > 0 ? (p_clicks / p_imp) * 100 : null,
-        position: c_imp > 0 ? (c_pos_sum / c_imp) : null, p_pos: p_imp > 0 ? (p_pos_sum / p_imp) : null
-      });
+    const configuration = await getSiteConfiguration(env.DB, siteSlug);
+    if (!configuration || configuration.site.status !== "active") {
+      throw new ApiError(404, "SITE_NOT_FOUND", "سایت فعال موردنظر پیدا نشد.");
     }
 
-    const processRow = (r: any) => {
-      const c_clicks = Number(r.c_clicks) || 0; const p_clicks = Number(r.p_clicks) || 0;
-      const c_imp = Number(r.c_imp) || 0;       const p_imp = Number(r.p_imp) || 0;
-      const c_pos = Number(r.c_pos) || 0;       const p_pos = Number(r.p_pos) || 0;
-      const c_ctr = c_imp > 0 ? (c_clicks / c_imp) * 100 : 0; const p_ctr = p_imp > 0 ? (p_clicks / p_imp) * 100 : 0;
-      return {
-        text: r.text, p_clicks, clicks: c_clicks, clicks_trend: p_clicks === 0 ? (c_clicks > 0 ? '∞' : 0) : ((c_clicks - p_clicks) / p_clicks * 100),
-        impressions: c_imp, imp_trend: p_imp === 0 ? (c_imp > 0 ? '∞' : 0) : ((c_imp - p_imp) / p_imp * 100),
-        ctr: c_ctr, ctr_trend: p_ctr === 0 ? (c_ctr > 0 ? '∞' : 0) : ((c_ctr - p_ctr) / p_ctr * 100),
-        position: c_pos, pos_trend: p_pos === 0 ? (c_pos > 0 ? '∞' : 0) : (p_pos - c_pos),
-        trendUp: c_clicks > p_clicks, click_diff: c_clicks - p_clicks
-      };
+    const repository = new InsightsRepository(env.DB);
+    const currentEnd = await repository.latestCompletedDate(
+      configuration.site.id,
+      configuration.site.default_search_type,
+    );
+    if (!currentEnd) {
+      throw new ApiError(409, "NO_DATA", "هنوز هیچ روز کاملی برای این سایت وارد نشده است.");
+    }
+    const currentStart = shiftIsoDate(currentEnd, -(days - 1));
+    const previousEnd = shiftIsoDate(currentStart, -1);
+    const previousStart = shiftIsoDate(previousEnd, -(days - 1));
+    const window: DateWindowInput = {
+      siteId: configuration.site.id,
+      searchType: configuration.site.default_search_type,
+      currentStart,
+      currentEnd,
+      previousStart,
+      previousEnd,
     };
+    const yearOverYearWindow: DateWindowInput = {
+      siteId: configuration.site.id,
+      searchType: configuration.site.default_search_type,
+      currentStart,
+      currentEnd,
+      previousStart: shiftIsoYear(currentStart, -1),
+      previousEnd: shiftIsoYear(currentEnd, -1),
+    };
+    const calibrationEnd = previousEnd;
+    const calibrationStart = shiftIsoDate(calibrationEnd, -89);
+    const peakEnd = endOfPreviousIsoMonth(currentEnd);
+    const peakStart = startOfIsoMonth(shiftIsoMonth(peakEnd, -12));
+    const peakExpectedDays = isoDateRangeDays(peakStart, peakEnd);
 
-    const allQueries = queriesRes.map(processRow);
-    const allPages = pagesRes.map(processRow);
-    const newRankings = allQueries.filter((q: any) => q.clicks_trend === '∞' && q.clicks > 0).sort((a: any, b: any) => b.clicks - a.clicks).slice(0, 5);
+    const [
+      allQueries,
+      allPages,
+      calibrationQueries,
+      currentQueryDevices,
+      calibrationQueryDevices,
+      yearOverYearPages,
+      monthlyPages,
+      cannibalizationRows,
+      dailyTotals,
+      currentCoverage,
+      previousCoverage,
+      yearOverYearCoverage,
+      peakCoverage,
+    ] = await Promise.all([
+        repository.loadQueryMetrics(window),
+        repository.loadPageMetrics(window),
+        repository.loadCalibrationQueries({
+          siteId: configuration.site.id,
+          searchType: configuration.site.default_search_type,
+          startDate: calibrationStart,
+          endDate: calibrationEnd,
+        }),
+        repository.loadQueryDeviceMetrics({
+          siteId: configuration.site.id,
+          searchType: configuration.site.default_search_type,
+          startDate: currentStart,
+          endDate: currentEnd,
+        }),
+        repository.loadQueryDeviceMetrics({
+          siteId: configuration.site.id,
+          searchType: configuration.site.default_search_type,
+          startDate: calibrationStart,
+          endDate: calibrationEnd,
+        }),
+        repository.loadPageMetrics(yearOverYearWindow),
+        repository.loadMonthlyPageMetrics({
+          siteId: configuration.site.id,
+          searchType: configuration.site.default_search_type,
+          startDate: peakStart,
+          endDate: peakEnd,
+        }),
+        repository.loadCannibalizationRows(window),
+        repository.loadDailyTotals(window),
+        repository.completedDateCoverage({
+          siteId: configuration.site.id,
+          searchType: configuration.site.default_search_type,
+          startDate: currentStart,
+          endDate: currentEnd,
+          expectedDays: days,
+        }),
+        repository.completedDateCoverage({
+          siteId: configuration.site.id,
+          searchType: configuration.site.default_search_type,
+          startDate: previousStart,
+          endDate: previousEnd,
+          expectedDays: days,
+        }),
+        repository.completedDateCoverage({
+          siteId: configuration.site.id,
+          searchType: configuration.site.default_search_type,
+          startDate: yearOverYearWindow.previousStart,
+          endDate: yearOverYearWindow.previousEnd,
+          expectedDays: days,
+        }),
+        repository.completedDateCoverage({
+          siteId: configuration.site.id,
+          searchType: configuration.site.default_search_type,
+          startDate: peakStart,
+          endDate: peakEnd,
+          expectedDays: peakExpectedDays,
+        }),
+      ]);
 
-    const groups: any = { 'بلاگ': {cc:0, pc:0, ci:0, pi:0}, 'محصولات': {cc:0, pc:0, ci:0, pi:0}, 'سایر': {cc:0, pc:0, ci:0, pi:0} };
-    pagesRes.forEach((p: any) => {
-      let cat = 'سایر';
-      if (p.text.includes('/blog') || p.text.includes('/mag') || p.text.includes('/article')) cat = 'بلاگ'; 
-      else if (p.text.includes('/product') || p.text.includes('/shop') || p.text.includes('/item')) cat = 'محصولات';
-      groups[cat].cc += Number(p.c_clicks) || 0; groups[cat].pc += Number(p.p_clicks) || 0; 
-      groups[cat].ci += Number(p.c_imp) || 0;    groups[cat].pi += Number(p.p_imp) || 0;
-    });
-    const contentGroups = Object.keys(groups).map((name, i) => processRow({ text: name, c_clicks: groups[name].cc, p_clicks: groups[name].pc, c_imp: groups[name].ci, p_imp: groups[name].pi, c_pos: 0, p_pos: 0 }));
+    const brandTerms: BrandTerm[] = configuration.brandTerms.map((term) => ({
+      term: term.term,
+      normalizedTerm: term.normalized_term,
+      brandType: term.brand_type,
+    }));
+    const contentRules: ContentRule[] = configuration.contentRules.map((rule) => ({
+      contentType: rule.content_type as ContentType,
+      matchType: rule.match_type,
+      pattern: rule.pattern,
+      priority: rule.priority,
+    }));
+    const contentType = (row: PageMetric): ContentType =>
+      row.contentType ?? classifyContent(row.key, contentRules);
+    const queries = filterQueries(allQueries, url, brandTerms);
+    const pages = filterPages(allPages, url, contentType);
 
-    const stopWords = ['خرید','قیمت','ارزان','بهترین','جدید','آموزش','نحوه','طرز','چگونه','چیست','آیا','کجا','کی','کدام','چه','فرق','تفاوت','راهنما','های','در','با','برای','از','به','است','این','که','آنلاین','فروشگاه','the','in','on','at','for','and','how','to','best','buy','cheap'];
-    const wordMap: any = {};
-    clusterRaw.forEach((row: any) => {
-      if (!row.text) return;
-      const words = row.text.split(/[\s\-_]+/);
-      words.forEach((w: string) => {
-        const cleanW = w.trim().toLowerCase();
-        if (cleanW.length < 3 || stopWords.includes(cleanW) || !isNaN(Number(cleanW))) return;
-        if (!wordMap[cleanW]) wordMap[cleanW] = { word: cleanW, c_clicks: 0, p_clicks: 0, c_imp: 0, p_imp: 0, qCount: 0 };
-        wordMap[cleanW].c_clicks += Number(row.c_clicks) || 0; wordMap[cleanW].p_clicks += Number(row.p_clicks) || 0;
-        wordMap[cleanW].c_imp += Number(row.c_imp) || 0; wordMap[cleanW].p_imp += Number(row.p_imp) || 0;
-        wordMap[cleanW].qCount += 1;
-      });
-    });
+    const contentGroupsMap = new Map<ContentType, PageMetric[]>();
+    for (const page of pages) {
+      const type = contentType(page);
+      const group = contentGroupsMap.get(type) ?? [];
+      group.push(page);
+      contentGroupsMap.set(type, group);
+    }
+    const contentLabels: Record<ContentType, string> = {
+      product: "محصولات",
+      category: "دسته‌بندی‌ها",
+      brand: "برندها",
+      article: "مقالات",
+      article_archive: "آرشیو مقالات",
+      page: "برگه‌ها",
+      other: "سایر",
+    };
+    const contentGroups = [...contentGroupsMap.entries()].map(([type, rows]) =>
+      rowFromGroup(contentLabels[type], rows),
+    );
 
-    const topicClusters = Object.values(wordMap)
-      .filter((c: any) => c.qCount > 1).sort((a: any, b: any) => b.c_clicks - a.c_clicks).slice(0, 15)
-      .map((c: any) => processRow({ text: c.word, c_clicks: c.c_clicks, p_clicks: c.p_clicks, c_imp: c.c_imp, p_imp: c.p_imp, c_pos: 0, p_pos: 0 }));
-        
-    const bestPageForQuery: any = {};
-    cannibalizationRaw.forEach((r: any) => {
-      const imp = Number(r.c_imp) || 0;
-      if (!bestPageForQuery[r.query] || imp > bestPageForQuery[r.query].imp) {
-         bestPageForQuery[r.query] = { url: r.page, imp: imp };
-      }
-    });
-
-    const strikingDistance = optimizeQueriesRaw
-      .filter((q: any) => q.c_pos >= 10 && q.c_pos <= 25 && q.c_imp > 50)
-      .sort((a: any, b: any) => b.c_imp - a.c_imp)
+    const topicClusters = buildTopicClusters(queries, configuration.topicClusters)
+      .slice(0, 20)
+      .map((cluster) => ({
+      text: cluster.label,
+      clicks: cluster.clicks,
+      p_clicks: 0,
+      impressions: cluster.impressions,
+      ctr: cluster.impressions > 0 ? (cluster.clicks / cluster.impressions) * 100 : 0,
+      position: 0,
+      clicks_trend: 0,
+      imp_trend: 0,
+      ctr_trend: 0,
+      pos_trend: 0,
+      click_diff: 0,
+      queries: cluster.queries,
+      source: cluster.source,
+    }));
+    const newRankings = findNewRankings(queries, brandTerms).slice(0, 50).map((row) => ({
+      text: row.query,
+      clicks: row.clicks,
+      p_clicks: 0,
+      impressions: row.impressions,
+      position: row.position,
+      ctr: row.impressions > 0 ? (row.clicks / row.impressions) * 100 : 0,
+      clicks_trend: "∞" as const,
+      imp_trend: "∞" as const,
+      ctr_trend: row.clicks > 0 ? "∞" as const : 0,
+      pos_trend: "∞" as const,
+      click_diff: row.clicks,
+      kind: row.kind,
+    }));
+    const settings = configuration.insightSettings;
+    const strikingDistance = findStrikingDistance(allQueries, brandTerms, {
+      minimumPosition: settings.strikingMinimumPosition,
+      maximumPosition: settings.strikingMaximumPosition,
+      minimumImpressions: settings.strikingMinimumImpressions,
+    })
       .slice(0, 150)
-      .map((q: any) => ({ text: q.text, url: bestPageForQuery[q.text]?.url || null, clicks: q.c_clicks, impressions: q.c_imp, position: q.c_pos, ctr: q.c_imp > 0 ? (q.c_clicks / q.c_imp) * 100 : 0 }));
+      .map((row) => ({
+        text: row.query,
+        url: row.page ?? null,
+        clicks: row.clicks,
+        impressions: row.impressions,
+        position: row.position,
+        ctr: row.impressions > 0 ? (row.clicks / row.impressions) * 100 : 0,
+        opportunityScore: row.opportunityScore,
+      }));
+    const bestPages = new Map(allQueries.map((row) => [row.key, row.bestPage]));
+    const currentCtrRows =
+      currentQueryDevices.length > 0
+        ? currentQueryDevices.map((row) => ({ ...row, bestPage: bestPages.get(row.key) }))
+        : allQueries;
+    const calibrationCtrRows =
+      calibrationQueryDevices.length > 0 ? calibrationQueryDevices : calibrationQueries;
+    const ctrBenchmark = findCtrOpportunities(
+      currentCtrRows,
+      calibrationCtrRows,
+      brandTerms,
+      {
+        minimumQueryImpressions: settings.ctrMinimumQueryImpressions,
+        minimumBenchmarkImpressions: settings.ctrMinimumBenchmarkImpressions,
+        maximumExpectedRatio: settings.ctrMaximumExpectedRatio,
+        minimumMissedClicks: settings.ctrMinimumMissedClicks,
+      },
+    )
+      .slice(0, 150)
+      .map((row) => ({
+        text: row.query,
+        url: row.page ?? null,
+        clicks: row.clicks,
+        impressions: row.impressions,
+        position: row.position,
+        ctr: row.actualCtr * 100,
+        expectedCtr: row.expectedCtr * 100,
+        missedClicks: row.missedClicks,
+        zScore: row.zScore,
+        device: row.device,
+      }));
+    const decayOptions = {
+      minimumPreviousClicks: settings.decayMinimumPreviousClicks,
+      minimumLostClicks: settings.decayMinimumLostClicks,
+      minimumDecayRatio: settings.decayMinimumRatio,
+      minimumDataCoverage: settings.minimumDataCoverage,
+      currentDataCoverage: currentCoverage,
+    };
+    const contentDecay = findContentDecay(allPages, {
+      ...decayOptions,
+      comparisonDataCoverage: previousCoverage,
+      comparison: "previous_period",
+    }).slice(0, 150).map((row) => ({
+      text: row.page,
+      clicks: row.currentClicks,
+      p_clicks: row.previousClicks,
+      click_diff: -row.lostClicks,
+      decayPercent: row.decayPercent,
+      decayScore: row.score,
+      cause: row.cause,
+      zScore: row.zScore,
+      comparison: row.comparison,
+    }));
+    const contentDecaySeasonal = findContentDecay(yearOverYearPages, {
+      ...decayOptions,
+      comparisonDataCoverage: yearOverYearCoverage,
+      comparison: "year_over_year",
+    }).slice(0, 150).map((row) => ({
+      text: row.page,
+      clicks: row.currentClicks,
+      p_clicks: row.previousClicks,
+      click_diff: -row.lostClicks,
+      decayPercent: row.decayPercent,
+      decayScore: row.score,
+      cause: row.cause,
+      zScore: row.zScore,
+      comparison: row.comparison,
+    }));
+    const contentDecayPeak = findPeakContentDecay(monthlyPages, peakEnd.slice(0, 7), {
+      minimumPreviousClicks: settings.decayMinimumPreviousClicks,
+      minimumLostClicks: settings.decayMinimumLostClicks,
+      minimumDecayRatio: settings.decayMinimumRatio,
+      minimumDataCoverage: settings.minimumDataCoverage,
+      currentDataCoverage: peakCoverage,
+      comparisonDataCoverage: peakCoverage,
+    }).slice(0, 150).map((row) => ({
+      text: row.page,
+      clicks: row.currentClicks,
+      p_clicks: row.previousClicks,
+      click_diff: -row.lostClicks,
+      decayPercent: row.decayPercent,
+      decayScore: row.score,
+      cause: row.cause,
+      zScore: row.zScore,
+      comparison: row.comparison,
+    }));
+    const zombies = findLowPerformancePages(allPages, {
+      minimumAgeDays: settings.lowPerformanceMinimumAgeDays,
+      minimumShownImpressions: settings.lowPerformanceMinimumImpressions,
+      minimumWeakPosition: settings.lowPerformanceMinimumPosition,
+    }).slice(0, 500).map((row) => ({
+      text: row.page,
+      clicks: 0,
+      impressions: row.impressions,
+      position: row.position,
+      confidence: row.confidence,
+      action: row.action,
+      reason: row.reason,
+      category: row.category,
+    }));
+    const cannibalizationData = findCannibalization(cannibalizationRows, brandTerms, {
+      minimumQueryImpressions: settings.cannibalizationMinimumQueryImpressions,
+      minimumPageImpressions: settings.cannibalizationMinimumPageImpressions,
+      minimumPageShare: settings.cannibalizationMinimumPageShare,
+      minimumWinnerSwitchRate: settings.cannibalizationMinimumSwitchRate,
+    })
+      .slice(0, 100)
+      .map((row, index) => ({ id: index + 1, ...row }));
 
-    const getExpectedCtr = (pos: number) => { if (pos < 2) return 25; if (pos < 4) return 10; if (pos < 6) return 6; if (pos <= 10) return 3; return 1; };
-    
-    const ctrBenchmark = optimizeQueriesRaw
-      .filter((q: any) => q.c_pos > 0 && q.c_pos <= 10 && q.c_imp > 100)
-      .map((q: any) => {
-         const expectedCtr = getExpectedCtr(q.c_pos); 
-         const expectedClicks = Math.round((q.c_imp * expectedCtr) / 100);
-         const ctr = q.c_imp > 0 ? (q.c_clicks/q.c_imp)*100 : 0;
-         return { text: q.text, url: bestPageForQuery[q.text]?.url || null, clicks: q.c_clicks, impressions: q.c_imp, position: q.c_pos, ctr, expectedCtr, missedClicks: expectedClicks - q.c_clicks };
-      })
-      .filter((q: any) => q.missedClicks > 0 && q.ctr < (q.expectedCtr * 0.5))
-      .sort((a: any, b: any) => b.missedClicks - a.missedClicks)
-      .slice(0, 150);
+    const currentTotals = aggregateMetrics(
+      dailyTotals
+        .filter((row) => row.date >= currentStart && row.date <= currentEnd)
+        .map((row) => ({ key: row.date, current: row, previous: row })),
+      "current",
+    );
+    const previousTotals = aggregateMetrics(
+      dailyTotals
+        .filter((row) => row.date >= previousStart && row.date <= previousEnd)
+        .map((row) => ({ key: row.date, current: row, previous: row })),
+      "previous",
+    );
 
-    const contentDecay = optimizePagesRaw
-      .filter((p: any) => p.p_clicks > 50 && (p.c_clicks - p.p_clicks) < 0)
-      .map((p: any) => {
-        const click_diff = p.c_clicks - p.p_clicks; 
-        const decayPercent = (click_diff / p.p_clicks) * 100;
-        return { text: p.text, clicks: p.c_clicks, p_clicks: p.p_clicks, click_diff, decayPercent, decayScore: Math.abs(click_diff) * Math.abs(decayPercent) };
-      })
-      .filter((p: any) => p.decayPercent <= -20)
-      .sort((a: any, b: any) => b.decayScore - a.decayScore)
-      .slice(0, 150);
-
-    const zombies = optimizePagesRaw
-      .filter((p: any) => p.c_clicks === 0 && p.c_imp >= 100)
-      .sort((a: any, b: any) => b.c_imp - a.c_imp)
-      .slice(0, 500)
-      .map((p: any) => ({ text: p.text, clicks: p.c_clicks, impressions: p.c_imp }));
-
-    const canniMap: any = {};
-    cannibalizationRaw.forEach((r: any) => {
-      if(!canniMap[r.query]) canniMap[r.query] = { totalImp: 0, pages: [] };
-      canniMap[r.query].totalImp += Number(r.c_imp) || 0;
-      canniMap[r.query].pages.push({ url: r.page, clicks: Number(r.c_clicks) || 0, impressions: Number(r.c_imp) || 0, position: Number(r.c_pos).toFixed(1) });
+    return Response.json({
+      success: true,
+      site: {
+        slug: configuration.site.slug,
+        name: configuration.site.name,
+        baseUrl: configuration.site.base_url,
+      },
+      meta: {
+        currentStart,
+        currentEnd,
+        previousStart,
+        previousEnd,
+        calibrationStart,
+        calibrationEnd,
+        coverage: {
+          current: currentCoverage,
+          previous: previousCoverage,
+          yearOverYear: yearOverYearCoverage,
+          minimumRequired: settings.minimumDataCoverage,
+        },
+        ctrSegmentedByDevice: currentQueryDevices.length > 0,
+        yearOverYear: {
+          start: yearOverYearWindow.previousStart,
+          end: yearOverYearWindow.previousEnd,
+          available: yearOverYearCoverage >= settings.minimumDataCoverage,
+        },
+        peakComparison: {
+          start: peakStart,
+          end: peakEnd,
+          latestMonth: peakEnd.slice(0, 7),
+          coverage: peakCoverage,
+          available: peakCoverage >= settings.minimumDataCoverage,
+        },
+        queryDetailMayBeIncomplete: true,
+        warning:
+          "Google ممکن است هنگام گروه‌بندی بر اساس query/page بخشی از ردیف‌های کم‌حجم را حذف کند؛ آمار کل از جدول totals محاسبه شده است.",
+      },
+      data: {
+        chartData: buildChartData(dailyTotals, window, days),
+        totals: legacyRow({ key: "totals", current: currentTotals, previous: previousTotals }),
+        queries: queries.slice(0, 5_000).map((row) => legacyRow(row)),
+        pages: pages.slice(0, 5_000).map((row) => legacyRow(row)),
+        newRankings,
+        contentGroups,
+        topicClusters,
+        cannibalizationData,
+        strikingDistance,
+        ctrBenchmark,
+        contentDecay,
+        contentDecaySeasonal,
+        contentDecayPeak,
+        zombies,
+      },
     });
-    
-    const cannibalizationData = []; let cId = 1;
-    for (const q in canniMap) {
-      const validPages = canniMap[q].pages.filter((p:any) => p.impressions >= 100 && p.impressions >= (canniMap[q].totalImp * 0.10));
-      if (validPages.length > 1) {
-        const pagesList = validPages.sort((a: any, b: any) => b.clicks - a.clicks);
-        pagesList[0].isWinner = true; for(let i=1; i<pagesList.length; i++) pagesList[i].isWinner = false;
-        const isCritical = Math.abs(Number(pagesList[0].position) - Number(pagesList[1].position)) < 5;
-        const totalC = pagesList.reduce((sum: number, p: any) => sum + p.clicks, 0);
-        cannibalizationData.push({ id: cId++, query: q, totalClicks: totalC, isCritical, competingPages: pagesList });
-      }
-    }
-    cannibalizationData.sort((a,b) => b.totalClicks - a.totalClicks).slice(0, 100);
-
-    return NextResponse.json({ 
-      success: true, 
-      data: { chartData, totals: processRow(totalsRes[0] || {}), queries: allQueries, pages: allPages, newRankings, contentGroups, topicClusters, cannibalizationData, strikingDistance, ctrBenchmark, contentDecay, zombies }
-    });
-
-  } catch (error: any) {
-    return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+  } catch (error) {
+    return errorResponse(error);
   }
 }

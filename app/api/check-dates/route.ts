@@ -1,44 +1,66 @@
-import { NextResponse } from 'next/server';
+import { getSiteConfiguration } from "@/lib/db/sites.ts";
+import { ApiError, errorResponse } from "@/lib/http/api-error.ts";
+import { requireInternalIdentity } from "@/lib/http/auth.ts";
+import { getAppEnv } from "@/lib/runtime/cloudflare.ts";
+import { expectedDateRange, latestFinalSearchConsoleDate } from "@/lib/sync/date.ts";
 
-export const dynamic = 'force-dynamic';
+export const dynamic = "force-dynamic";
 
-export async function GET() {
+interface CompletedDateRow {
+  data_date: string;
+}
+
+export async function GET(request: Request): Promise<Response> {
   try {
-    const { CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_DATABASE_ID, CLOUDFLARE_API_TOKEN } = process.env;
-    const d1Url = `https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/d1/database/${CLOUDFLARE_DATABASE_ID}/query`;
+    const env = await getAppEnv();
+    requireInternalIdentity(request, env);
+    const url = new URL(request.url);
+    const siteSlug = url.searchParams.get("site")?.trim();
+    const days = Number(url.searchParams.get("days") ?? "120");
 
-    // گرفتن لیست تمام تاریخ‌هایی که تا الان در دیتابیس ذخیره شده‌اند
-    const res = await fetch(d1Url, {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${CLOUDFLARE_API_TOKEN}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sql: "SELECT DISTINCT date FROM site_totals ORDER BY date DESC" })
-    });
-
-    if (!res.ok) throw new Error("خطا در ارتباط با کلادفلر");
-
-    const data = await res.json();
-    const existingDates = data.result?.[0]?.results?.map((r: any) => r.date) || [];
-
-    // بررسی ۱۲۰ روز گذشته و پیدا کردن تاریخ‌هایی که در دیتابیس نیستند
-    const missingDates = [];
-    for (let i = 1; i <= 120; i++) {
-      const d = new Date();
-      d.setDate(d.getDate() - i);
-      const dateStr = d.toISOString().split('T')[0];
-      
-      // اگر تاریخِ امروز منهای i در دیتابیس نبود، بفرستش تو لیست گمشده‌ها
-      if (!existingDates.includes(dateStr)) {
-        missingDates.push(dateStr);
-      }
+    if (!siteSlug) {
+      throw new ApiError(400, "SITE_REQUIRED", "انتخاب سایت الزامی است.");
+    }
+    if (!Number.isInteger(days) || days < 1 || days > 489) {
+      throw new ApiError(400, "INVALID_RANGE", "بازه باید بین ۱ تا ۴۸۹ روز باشد.");
     }
 
-    return NextResponse.json({ 
-      success: true, 
-      missingDates, 
-      existingCount: existingDates.length 
-    });
+    const configuration = await getSiteConfiguration(env.DB, siteSlug);
+    if (!configuration || configuration.site.status !== "active") {
+      throw new ApiError(404, "SITE_NOT_FOUND", "سایت فعال موردنظر پیدا نشد.");
+    }
 
-  } catch (error: any) {
-    return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+    const endDate = latestFinalSearchConsoleDate();
+    const expectedDates = expectedDateRange(endDate, days);
+    const startDate = expectedDates[0];
+    const result = await env.DB
+      .prepare(
+        `SELECT data_date
+         FROM sync_runs
+         WHERE site_id = ? AND search_type = ? AND status = 'completed'
+           AND data_date BETWEEN ? AND ?
+         ORDER BY data_date ASC`,
+      )
+      .bind(
+        configuration.site.id,
+        configuration.site.default_search_type,
+        startDate,
+        endDate,
+      )
+      .all<CompletedDateRow>();
+
+    if (!result.success) throw new Error(result.error ?? "Could not scan completed dates");
+    const existingDates = new Set((result.results ?? []).map((row) => row.data_date));
+    const missingDates = expectedDates.filter((date) => !existingDates.has(date));
+
+    return Response.json({
+      success: true,
+      site: { slug: configuration.site.slug, name: configuration.site.name },
+      range: { startDate, endDate, days },
+      missingDates,
+      existingCount: expectedDates.length - missingDates.length,
+    });
+  } catch (error) {
+    return errorResponse(error);
   }
 }
