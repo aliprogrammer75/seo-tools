@@ -1,36 +1,48 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# SEO Tools Internal
 
-## Getting Started
+داشبورد داخلی و چندسایتی برای تبدیل داده‌های Google Search Console به بینش‌های عملیاتی سئو.
 
-First, run the development server:
+## وضعیت فونداسیون
+
+- Next.js App Router
+- Cloudflare Workers و D1
+- یک Service Account مشترک برای چند Property سرچ کنسول
+- دریافت داده نهایی با صفحه‌بندی ۲۵٬۰۰۰ ردیفی
+- تفکیک برند سایت از برند محصول
+- طبقه‌بندی قابل تنظیم محصولات، دسته‌ها، برندها و مقالات
+
+## تنظیمات محرمانه
+
+فایل `.dev.vars.example` را برای توسعه محلی به `.dev.vars` کپی کنید و مقدار واقعی Secretها را فقط در فایل محلی قرار دهید. فایل JSON سرویس‌اکانت، Private Key و `.dev.vars` نباید وارد Git شوند.
+
+در Cloudflare نیز این مقادیر باید به‌عنوان Secret تنظیم شوند:
+
+- `GOOGLE_SERVICE_ACCOUNT_EMAIL`
+- `GOOGLE_PRIVATE_KEY`
+- `CRON_SECRET`
+
+## دیتابیس محلی
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npx wrangler d1 migrations apply seo-tools-staging --local
+npx wrangler d1 execute seo-tools-staging --local --file seeds/0001_digikhab.sql
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## دیتابیس آزمایشی Cloudflare
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+پس از ورود امن به Wrangler:
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+npx wrangler d1 migrations apply seo-tools-staging --remote
+npx wrangler d1 execute seo-tools-staging --remote --file seeds/0001_digikhab.sql
+```
 
-## Learn More
+## آزمون‌ها
 
-To learn more about Next.js, take a look at the following resources:
+آزمون‌ها با Node.js 24 اجرا می‌شوند:
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```bash
+npm test
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+این مرحله هنوز APIهای قدیمی Import و Dashboard را جایگزین نکرده است؛ مهاجرت آن‌ها در مرحله بعد انجام می‌شود.

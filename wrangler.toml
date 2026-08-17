@@ -1,8 +1,8 @@
-name = "seo-tool-fa"
-compatibility_date = "2024-02-26"
+name = "seo-tools-internal"
+compatibility_date = "2026-08-17"
 
-# این همان کلیدی است که کلادفلر به شما داد
 [[d1_databases]]
-binding = "seogets_db"
-database_name = "seogets-db"
-database_id = "eeaa497c-f113-41f0-9efc-797d0becd110"
+binding = "DB"
+database_name = "seo-tools-staging"
+database_id = "ea3db656-3d94-4f8f-b819-5bd70abcbd64"
+migrations_dir = "migrations"
