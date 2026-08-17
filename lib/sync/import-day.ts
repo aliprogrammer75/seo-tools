@@ -130,7 +130,7 @@ export async function importSearchConsoleDay(input: ImportDayInput): Promise<Imp
           startDate: input.date,
           endDate: input.date,
           dimensions: step.gscDimensions,
-          type: input.site.default_search_type as "web",
+          type: input.site.default_search_type,
           dataState: "final",
           aggregationType: "auto",
           rowLimit: step.rowLimit,

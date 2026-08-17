@@ -1,4 +1,5 @@
 import type { D1Database } from "./d1.ts";
+import type { SearchAnalyticsType } from "../search-console/pagination.ts";
 
 export interface SiteRecord {
   id: number;
@@ -7,7 +8,7 @@ export interface SiteRecord {
   base_url: string;
   gsc_property_url: string;
   timezone: string;
-  default_search_type: string;
+  default_search_type: SearchAnalyticsType;
   status: "active" | "paused" | "archived";
 }
 
@@ -84,6 +85,38 @@ function parseBrandTerm(value: unknown): SiteBrandTermRecord {
   };
 }
 
+function parseSite(value: unknown): SiteRecord {
+  const row = asRecord(value, "site");
+  const searchType = requiredString(row, "default_search_type", "site");
+  const status = requiredString(row, "status", "site");
+  const allowedSearchTypes: SearchAnalyticsType[] = [
+    "web",
+    "image",
+    "video",
+    "news",
+    "discover",
+    "googleNews",
+  ];
+
+  if (!allowedSearchTypes.includes(searchType as SearchAnalyticsType)) {
+    throw new Error("Invalid default_search_type returned for site");
+  }
+  if (status !== "active" && status !== "paused" && status !== "archived") {
+    throw new Error("Invalid status returned for site");
+  }
+
+  return {
+    id: requiredNumber(row, "id", "site"),
+    slug: requiredString(row, "slug", "site"),
+    name: requiredString(row, "name", "site"),
+    base_url: requiredString(row, "base_url", "site"),
+    gsc_property_url: requiredString(row, "gsc_property_url", "site"),
+    timezone: requiredString(row, "timezone", "site"),
+    default_search_type: searchType as SearchAnalyticsType,
+    status,
+  };
+}
+
 function parseContentRule(value: unknown): SiteContentRuleRecord {
   const row = asRecord(value, "site content rule");
   const matchType = requiredString(row, "match_type", "site content rule");
@@ -132,14 +165,14 @@ export async function listActiveSites(db: D1Database): Promise<SiteRecord[]> {
     .all<SiteRecord>();
 
   if (!result.success) throw new Error(result.error ?? "Could not list active sites");
-  return result.results ?? [];
+  return (result.results ?? []).map(parseSite);
 }
 
 export async function getSiteConfiguration(
   db: D1Database,
   slug: string,
 ): Promise<SiteConfiguration | null> {
-  const site = await db
+  const siteRow = await db
     .prepare(
       `SELECT id, slug, name, base_url, gsc_property_url, timezone,
               default_search_type, status
@@ -150,7 +183,8 @@ export async function getSiteConfiguration(
     .bind(slug)
     .first<SiteRecord>();
 
-  if (!site) return null;
+  if (!siteRow) return null;
+  const site = parseSite(siteRow);
 
   const [brandTerms, contentRules, sitemaps] = await db.batch([
     db

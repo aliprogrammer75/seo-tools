@@ -9,6 +9,14 @@ export type SearchAnalyticsDimension =
   | "hour"
   | "searchAppearance";
 
+export type SearchAnalyticsType =
+  | "web"
+  | "image"
+  | "video"
+  | "news"
+  | "discover"
+  | "googleNews";
+
 export interface SearchAnalyticsRow {
   keys?: string[];
   clicks?: number;
@@ -21,7 +29,7 @@ export interface SearchAnalyticsRequest {
   startDate: string;
   endDate: string;
   dimensions?: SearchAnalyticsDimension[];
-  type?: "web" | "image" | "video" | "news" | "discover" | "googleNews";
+  type?: SearchAnalyticsType;
   dataState?: "final" | "all";
   aggregationType?: "auto" | "byPage" | "byProperty";
   rowLimit: number;

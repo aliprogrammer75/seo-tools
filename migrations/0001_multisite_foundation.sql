@@ -7,7 +7,10 @@ CREATE TABLE IF NOT EXISTS sites (
     base_url TEXT NOT NULL,
     gsc_property_url TEXT NOT NULL UNIQUE,
     timezone TEXT NOT NULL DEFAULT 'Asia/Tehran',
-    default_search_type TEXT NOT NULL DEFAULT 'web',
+    default_search_type TEXT NOT NULL DEFAULT 'web'
+        CHECK (default_search_type IN (
+            'web', 'image', 'video', 'news', 'discover', 'googleNews'
+        )),
     status TEXT NOT NULL DEFAULT 'active'
         CHECK (status IN ('active', 'paused', 'archived')),
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,

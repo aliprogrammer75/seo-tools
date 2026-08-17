@@ -1,3 +1,4 @@
 GOOGLE_SERVICE_ACCOUNT_EMAIL=seo-tools-reader@seo-tools-internal.iam.gserviceaccount.com
 GOOGLE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\nREPLACE_WITH_LOCAL_TEST_KEY\n-----END PRIVATE KEY-----\n"
 CRON_SECRET=replace-with-a-long-random-value
+APP_ENV=development
