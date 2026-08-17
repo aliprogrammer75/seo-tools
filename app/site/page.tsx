@@ -21,7 +21,12 @@ export default function SiteDashboard() {
   const menuRef = useRef<HTMLDivElement>(null);
 
   const [excludeBrand, setExcludeBrand] = useState(true);
-  const [brandKeywords, setBrandKeywords] = useState("exir, اکسیر");
+  const [brandKeywords, setBrandKeywords] = useState("دیجی خواب, digikhab");
+  const [siteInfo, setSiteInfo] = useState({
+    slug: "digikhab",
+    name: "دیجی خواب",
+    baseUrl: "https://digikhab.org/",
+  });
   
   const [querySearchInput, setQuerySearchInput] = useState("");
   const [debouncedQuerySearch, setDebouncedQuerySearch] = useState("");
@@ -92,6 +97,7 @@ export default function SiteDashboard() {
       setIsLoading(true);
       try {
         const params = new URLSearchParams({
+          site: siteInfo.slug,
           days: period.toString(),
           excludeBrand: excludeBrand.toString(),
           brands: brandKeywords,
@@ -106,6 +112,7 @@ export default function SiteDashboard() {
         
         if (result.success && result.data) {
           const d = result.data;
+          if (result.site) setSiteInfo(result.site);
           setTotals(d.totals || null);
           setRealChartData(d.chartData || []);
           setRealCannibalization(d.cannibalizationData || []); 
@@ -124,11 +131,11 @@ export default function SiteDashboard() {
           });
 
           if (d.queries) setRealQueries(d.queries.map((r: any, i: number) => formatRow(r, i, r.text)));
-          if (d.pages) setRealPages(d.pages.map((r: any, i: number) => formatRow(r, i, decodeURI(r.text.replace('https://exir.vip', '') || '/'))));
+          if (d.pages) setRealPages(d.pages.map((r: any, i: number) => formatRow(r, i, decodeURI(r.text.replace(siteInfo.baseUrl.replace(/\/$/, ''), '') || '/'))));
           if (d.contentGroups) setRealContentGroups(d.contentGroups.map((r: any, i: number) => formatRow(r, i, r.text)));
           if (d.topicClusters) setRealTopicClusters(d.topicClusters.map((r: any, i: number) => formatRow(r, i, r.text)));
           if (d.newRankings) setRealNewRankings(d.newRankings.map((r: any, i: number) => formatRow(r, i, r.text)));
-          if (d.zombies) setRealZombies(d.zombies.map((r: any, i: number) => formatRow(r, i, decodeURI(r.text.replace('https://exir.vip', '') || '/'))));
+          if (d.zombies) setRealZombies(d.zombies.map((r: any, i: number) => formatRow(r, i, decodeURI(r.text.replace(siteInfo.baseUrl.replace(/\/$/, ''), '') || '/'))));
         }
       } catch (error) { 
         console.error("خطا:", error); 
@@ -137,7 +144,7 @@ export default function SiteDashboard() {
       }
     }
     fetchAllData();
-  }, [period, excludeBrand, brandKeywords, activeQueryPreset, debouncedQuerySearch, activePagePreset, debouncedPageSearch]);
+  }, [period, excludeBrand, brandKeywords, activeQueryPreset, debouncedQuerySearch, activePagePreset, debouncedPageSearch, siteInfo.slug]);
 
   const getSortedData = (data: any[], filterMode: string, sortConfig?: { key: string, direction: 'asc' | 'desc' }) => {
     if (!data) return [];
@@ -175,6 +182,8 @@ export default function SiteDashboard() {
   const sortedContentGroups = getSortedData(realContentGroups, "All", sorts.ContentGroups);
   const sortedTopicClusters = getSortedData(realTopicClusters, "All", sorts.TopicClusters);
   const sortedNewRankings = getSortedData(realNewRankings, "All", sorts.NewRankings);
+  const activeClusterQueries = realTopicClusters.find(cluster => cluster.text === activeCluster)?.queries || [];
+  const toSiteUrl = (value: string) => new URL(value, siteInfo.baseUrl).toString();
 
   const FilterButtons = ({ activeFilter, setFilter }: { activeFilter: string, setFilter: (val: string) => void }) => (
     <div className="flex bg-gray-100 rounded-lg p-1 text-xs font-medium shrink-0">
@@ -231,7 +240,7 @@ export default function SiteDashboard() {
         <div className="flex items-center gap-2 text-gray-500 text-sm">
           <Link href="/" className="hover:text-gray-800 transition font-medium">سئوگتس</Link><span>/</span>
           <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-md border border-gray-200 shadow-sm text-gray-800 font-bold" dir="ltr">
-            <span className="text-purple-500">🌐</span> https://exir.vip/
+            <span className="text-purple-500">🌐</span> {siteInfo.baseUrl}
           </div>
         </div>
 
@@ -388,7 +397,7 @@ export default function SiteDashboard() {
               <div className="flex items-center gap-2 mb-2"><Target size={20} className={activeOptTool === 'Striking' ? 'text-blue-500' : 'text-gray-400 group-hover:text-blue-500'} /><h3 className={`font-black ${activeOptTool === 'Striking' ? 'text-blue-900' : 'text-gray-700'}`}>کلمات در یک قدمی</h3></div>
             </button>
             <button onClick={() => setActiveOptTool('CTR')} className={`p-4 rounded-2xl border text-right transition-all group ${activeOptTool === 'CTR' ? 'bg-teal-50 border-teal-200 shadow-sm' : 'bg-white border-gray-200 hover:border-teal-300'}`}>
-              <div className="flex items-center gap-2 mb-2"><MousePointerClick size={20} className={activeOptTool === 'CTR' ? 'text-teal-500' : 'text-gray-400 group-hover:text-teal-500'} /><h3 className={`font-black ${activeOptTool === 'CTR' ? 'text-teal-900' : 'text-gray-700'}`}>قاتل تایتل‌ها (CTR)</h3></div>
+              <div className="flex items-center gap-2 mb-2"><MousePointerClick size={20} className={activeOptTool === 'CTR' ? 'text-teal-500' : 'text-gray-400 group-hover:text-teal-500'} /><h3 className={`font-black ${activeOptTool === 'CTR' ? 'text-teal-900' : 'text-gray-700'}`}>فرصت‌های CTR</h3></div>
             </button>
             <button onClick={() => setActiveOptTool('Cannibalization')} className={`p-4 rounded-2xl border text-right transition-all group ${activeOptTool === 'Cannibalization' ? 'bg-rose-50 border-rose-200 shadow-sm' : 'bg-white border-gray-200 hover:border-rose-300'}`}>
               <div className="flex items-center gap-2 mb-2"><AlertCircle size={20} className={activeOptTool === 'Cannibalization' ? 'text-rose-500' : 'text-gray-400 group-hover:text-rose-500'} /><h3 className={`font-black ${activeOptTool === 'Cannibalization' ? 'text-rose-900' : 'text-gray-700'}`}>هم‌خواری کلمات</h3></div>
@@ -398,7 +407,7 @@ export default function SiteDashboard() {
             </button>
             <div className="mt-4 p-4 bg-slate-50 border border-gray-200 rounded-2xl">
               <label className="text-xs font-bold text-gray-700 block mb-2 flex items-center gap-1"><ShieldAlert size={14}/> کلمات برند سایت</label>
-              <input type="text" value={brandKeywords} onChange={(e) => setBrandKeywords(e.target.value)} placeholder="مثال: exir, اکسیر" className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-indigo-400" />
+              <input type="text" value={brandKeywords} onChange={(e) => setBrandKeywords(e.target.value)} placeholder="مثال: دیجی خواب, digikhab" className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-indigo-400" />
             </div>
           </div>
 
@@ -419,7 +428,7 @@ export default function SiteDashboard() {
                     <tr key={idx} className="hover:bg-blue-50/30 transition">
                       <td className="py-4 font-bold text-right">
                         <div className="text-slate-800">{item.text}</div>
-                        {item.url && <a href={`https://exir.vip${item.url}`} target="_blank" className="text-[10px] text-blue-500 hover:text-blue-700 font-medium truncate max-w-[250px] block mt-1" dir="ltr">{decodeURI(item.url)}</a>}
+                        {item.url && <a href={toSiteUrl(item.url)} target="_blank" rel="noreferrer" className="text-[10px] text-blue-500 hover:text-blue-700 font-medium truncate max-w-[250px] block mt-1" dir="ltr">{decodeURI(item.url)}</a>}
                       </td>
                       <td className="font-black text-orange-600">{item.position.toFixed(1)}</td>
                       <td>{formatNumber(item.impressions)}</td>
@@ -431,13 +440,13 @@ export default function SiteDashboard() {
             )}
             {activeOptTool === 'CTR' && (
               <div className="animate-fade-in">
-                <div className="mb-6"><h2 className="text-xl font-black text-gray-800 mb-2">قاتل تایتل‌ها</h2><p className="text-sm text-gray-500">کلماتی که رتبه عالی دارند اما کلیک نمی‌خورند. با کلیک روی آدرس، تایتل صفحه را ویرایش کنید.</p></div>
+                <div className="mb-6"><h2 className="text-xl font-black text-gray-800 mb-2">فرصت‌های بهبود CTR</h2><p className="text-sm text-gray-500">CTR این کوئری‌ها با معیار تاریخی غیر‌برند همین سایت و با کنترل حداقل حجم و معناداری آماری مقایسه شده است.</p></div>
                 <table className="w-full text-sm text-left"><thead className="text-xs text-gray-400 border-b border-gray-100"><tr><th className="py-3 font-bold text-right">کلمه و آدرس صفحه</th><th>افت کلیک</th><th>CTR واقعی</th><th>انتظار</th></tr></thead><tbody className="divide-y divide-gray-50">
                   {realCtrBench.map((item, idx) => (
                     <tr key={idx} className="hover:bg-teal-50/30 transition">
                       <td className="py-4 font-bold text-right">
                         <div className="text-slate-800">{item.text}</div>
-                        {item.url && <a href={`https://exir.vip${item.url}`} target="_blank" className="text-[10px] text-teal-600 hover:text-teal-800 font-medium truncate max-w-[250px] block mt-1" dir="ltr">{decodeURI(item.url)}</a>}
+                        {item.url && <a href={toSiteUrl(item.url)} target="_blank" rel="noreferrer" className="text-[10px] text-teal-600 hover:text-teal-800 font-medium truncate max-w-[250px] block mt-1" dir="ltr">{decodeURI(item.url)}</a>}
                       </td>
                       <td className="text-rose-600 font-bold">-{item.missedClicks}</td>
                       <td>{item.ctr.toFixed(1)}%</td>
@@ -447,10 +456,10 @@ export default function SiteDashboard() {
                 </tbody></table>
               </div>
             )}
-            {activeOptTool === 'Cannibalization' && (<div className="-m-6"><Cannibalization data={realCannibalization} /></div>)}
+            {activeOptTool === 'Cannibalization' && (<div className="-m-6"><Cannibalization data={realCannibalization} baseUrl={siteInfo.baseUrl} /></div>)}
             {activeOptTool === 'Zombie' && (
               <div className="animate-fade-in">
-                <div className="mb-6"><h2 className="text-xl font-black text-gray-800 mb-2">شکارچی صفحات زامبی 🧟‍♂️</h2><p className="text-sm text-gray-500">حداقل ۱۰۰ ایمپرشن و صفر کلیک.</p></div>
+                <div className="mb-6"><h2 className="text-xl font-black text-gray-800 mb-2">صفحات کم‌عملکرد برای بازبینی</h2><p className="text-sm text-gray-500">حداقل ۲۰۰ ایمپرشن، صفر کلیک، رتبه ۱۵ به بعد و در صورت وجود Sitemap حداقل ۹۰ روز عمر. این فهرست حکم حذف خودکار نیست.</p></div>
                 <table className="w-full text-sm text-left"><thead className="text-xs text-gray-400 border-b border-gray-100"><tr><th className="py-3 font-bold text-right">آدرس صفحه</th><th className="w-20 text-center">کلیک</th><th className="w-24 text-center">ایمپرشن</th></tr></thead><tbody className="divide-y divide-gray-50">
                   {realZombies.map((item, idx) => (<tr key={idx} className="hover:bg-slate-50/80 transition"><td className="py-4 font-medium text-slate-700 text-right truncate max-w-[200px]" dir="ltr">{item.text}</td><td className="text-rose-500 font-black text-center">0</td><td className="text-purple-600 font-bold text-center">{formatNumber(item.impressions)}</td></tr>))}
                 </tbody></table>
@@ -493,7 +502,7 @@ export default function SiteDashboard() {
             </div>
             <div className="p-6 overflow-y-auto overflow-x-auto custom-scrollbar" style={{ maxHeight: 'calc(85vh - 90px)' }}>
               <div className="space-y-1.5 text-sm min-w-[600px]">
-                {realQueries.filter(q => q.text.toLowerCase().includes(activeCluster.toLowerCase())).map(item => (
+                {realQueries.filter(q => activeClusterQueries.includes(q.text)).map(item => (
                     <div key={item.id} className="relative group overflow-hidden rounded-md border border-gray-50 p-3 hover:border-blue-100 hover:bg-blue-50/30 transition">
                       <div className="absolute top-0 right-0 h-full bg-blue-50/50 -z-10" style={{ width: `${item.progress}%` }}></div>
                       <div className="flex justify-between items-center"><span className="font-bold text-slate-700 truncate max-w-[40%] flex items-center">{item.text} <RankBadge rank={item.position} /></span><TableMetrics item={item} /></div>

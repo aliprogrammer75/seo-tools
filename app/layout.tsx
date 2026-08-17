@@ -1,10 +1,6 @@
 import type { Metadata } from "next";
-import { Vazirmatn } from "next/font/google";
 import Link from "next/link";
 import "./globals.css";
-
-// تنظیمات فونت فارسی
-const vazir = Vazirmatn({ subsets: ["arabic"] });
 
 export const metadata: Metadata = {
   title: "ابزار سئو | مشابه SEOGets",
@@ -18,7 +14,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="fa" dir="rtl">
-      <body className={`${vazir.className} bg-[#f8fafc] text-slate-900 min-h-screen flex flex-col`}>
+      <body className="font-[Vazirmatn,Tahoma,Arial,sans-serif] bg-[#f8fafc] text-slate-900 min-h-screen flex flex-col">
         
         {/* هدر بالای صفحه (Top Navigation) */}
         <header className="bg-white border-b border-gray-200 sticky top-0 z-50">

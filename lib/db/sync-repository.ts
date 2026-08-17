@@ -137,7 +137,11 @@ function metricStatement(
 }
 
 export class D1SyncRepository implements SyncRepository {
-  constructor(private readonly db: D1Database) {}
+  private readonly db: D1Database;
+
+  constructor(db: D1Database) {
+    this.db = db;
+  }
 
   async beginRun(input: BeginRunInput): Promise<SyncRun> {
     const proposedId = crypto.randomUUID();
