@@ -21,6 +21,11 @@ SELECT id, 'https://digikhab.org/sitemap_index.xml', 'index'
 FROM sites
 WHERE slug = 'digikhab';
 
+INSERT OR IGNORE INTO site_insight_settings (site_id)
+SELECT id
+FROM sites
+WHERE slug = 'digikhab';
+
 INSERT OR IGNORE INTO site_brand_terms (site_id, term, normalized_term, brand_type)
 SELECT id, 'دیجی خواب', 'دیجی خواب', 'site' FROM sites WHERE slug = 'digikhab';
 INSERT OR IGNORE INTO site_brand_terms (site_id, term, normalized_term, brand_type)

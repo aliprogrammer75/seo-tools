@@ -26,12 +26,6 @@ CREATE TABLE IF NOT EXISTS site_insight_settings (
 INSERT OR IGNORE INTO site_insight_settings (site_id)
 SELECT id FROM sites;
 
-CREATE TRIGGER IF NOT EXISTS trg_sites_default_insight_settings
-AFTER INSERT ON sites
-BEGIN
-    INSERT OR IGNORE INTO site_insight_settings (site_id) VALUES (NEW.id);
-END;
-
 CREATE TABLE IF NOT EXISTS site_topic_clusters (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     site_id INTEGER NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
