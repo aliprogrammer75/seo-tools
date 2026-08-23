@@ -5,6 +5,11 @@ export interface InternalIdentity {
   email: string;
 }
 
+interface AccessJwtClaims {
+  email?: unknown;
+  exp?: unknown;
+}
+
 function isLocalDevelopment(request: Request, env: AppEnv): boolean {
   const hostname = new URL(request.url).hostname;
   return (
@@ -22,7 +27,7 @@ export function requireInternalIdentity(
   const email = request.headers.get("cf-access-authenticated-user-email")?.trim();
   const assertion = request.headers.get("cf-access-jwt-assertion")?.trim();
 
-  if (!email || !assertion) {
+  if (!email || !assertion || !hasValidAccessClaims(assertion, email)) {
     throw new ApiError(
       401,
       "ACCESS_REQUIRED",
@@ -42,6 +47,35 @@ function constantTimeEqual(left: string, right: string): boolean {
   }
 
   return difference === 0;
+}
+
+function decodeAccessJwtClaims(assertion: string): AccessJwtClaims | null {
+  const segments = assertion.split(".");
+  if (segments.length !== 3 || segments.some((segment) => segment.length === 0)) {
+    return null;
+  }
+
+  try {
+    const normalized = segments[1].replace(/-/g, "+").replace(/_/g, "/");
+    const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
+    return JSON.parse(atob(padded)) as AccessJwtClaims;
+  } catch {
+    return null;
+  }
+}
+
+function hasValidAccessClaims(assertion: string, email: string): boolean {
+  const claims = decodeAccessJwtClaims(assertion);
+  if (!claims || claims.email !== email) return false;
+
+  if (claims.exp !== undefined) {
+    const expiry = Number(claims.exp);
+    if (!Number.isFinite(expiry) || expiry <= Math.floor(Date.now() / 1000)) {
+      return false;
+    }
+  }
+
+  return true;
 }
 
 export function requireCronAuthorization(request: Request, env: AppEnv): void {

@@ -9,11 +9,17 @@ const env = {
   CRON_SECRET: "a-long-random-secret",
 } as AppEnv;
 
+function accessAssertion(email: string, exp = Math.floor(Date.now() / 1000) + 300): string {
+  const encode = (value: unknown) =>
+    Buffer.from(JSON.stringify(value)).toString("base64url");
+  return `${encode({ alg: "RS256", typ: "JWT" })}.${encode({ email, exp })}.signature`;
+}
+
 test("requires both Cloudflare Access identity headers in production", () => {
   const request = new Request("https://seo.example.com/api/sites", {
     headers: {
       "cf-access-authenticated-user-email": "owner@example.com",
-      "cf-access-jwt-assertion": "signed-access-token",
+      "cf-access-jwt-assertion": accessAssertion("owner@example.com"),
     },
   });
 
@@ -22,6 +28,31 @@ test("requires both Cloudflare Access identity headers in production", () => {
     () => requireInternalIdentity(new Request("https://seo.example.com/api/sites"), env),
     /Cloudflare Access/,
   );
+});
+
+test("rejects malformed, mismatched, and expired Access assertions", () => {
+  const base = "https://seo.example.com/api/sites";
+  const cases = [
+    "not-a-jwt",
+    accessAssertion("other@example.com"),
+    accessAssertion("owner@example.com", Math.floor(Date.now() / 1000) - 1),
+  ];
+
+  for (const assertion of cases) {
+    assert.throws(
+      () =>
+        requireInternalIdentity(
+          new Request(base, {
+            headers: {
+              "cf-access-authenticated-user-email": "owner@example.com",
+              "cf-access-jwt-assertion": assertion,
+            },
+          }),
+          env,
+        ),
+      /Cloudflare Access/,
+    );
+  }
 });
 
 test("allows the explicit local-development bypass only on localhost", () => {
