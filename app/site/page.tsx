@@ -21,12 +21,34 @@ export default function SiteDashboard() {
   const menuRef = useRef<HTMLDivElement>(null);
 
   const [excludeBrand, setExcludeBrand] = useState(true);
-  const [brandKeywords, setBrandKeywords] = useState("دیجی خواب, digikhab");
-  const [siteInfo, setSiteInfo] = useState({
-    slug: "digikhab",
-    name: "دیجی خواب",
-    baseUrl: "https://digikhab.org/",
-  });
+  const [siteInfo, setSiteInfo] = useState({ slug: "", name: "", baseUrl: "" });
+  const [sites, setSites] = useState<Array<{ slug: string; name: string; baseUrl: string }>>([]);
+  const [sitesError, setSitesError] = useState("");
+  const [dataError, setDataError] = useState("");
+  const [isLoadingSites, setIsLoadingSites] = useState(true);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    async function loadSites() {
+      try {
+        const response = await fetch("/api/sites", { cache: "no-store", signal: controller.signal });
+        const body = await response.json();
+        if (!response.ok || !body.success || !Array.isArray(body.sites)) {
+          throw new Error(body.message || body.error || "دریافت فهرست سایت‌ها ناموفق بود.");
+        }
+        const options = body.sites.filter((site: {slug?: string; baseUrl?: string}) => site.slug && site.baseUrl);
+        setSites(options);
+        if (options.length === 0) setSitesError("هیچ سایت فعالی ثبت نشده است.");
+        else setSiteInfo(options[0]);
+      } catch (error) {
+        if (!controller.signal.aborted) setSitesError(error instanceof Error ? error.message : "خطا در دریافت سایت‌ها");
+      } finally {
+        if (!controller.signal.aborted) setIsLoadingSites(false);
+      }
+    }
+    void loadSites();
+    return () => controller.abort();
+  }, []);
   
   const [querySearchInput, setQuerySearchInput] = useState("");
   const [debouncedQuerySearch, setDebouncedQuerySearch] = useState("");
@@ -80,7 +102,7 @@ export default function SiteDashboard() {
   const [realZombies, setRealZombies] = useState<any[]>([]);
 
   const [totals, setTotals] = useState<any>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(false);
 
   const [sorts, setSorts] = useState<Record<string, { key: string, direction: 'asc' | 'desc' }>>({
     TopicClusters: { key: 'clicks', direction: 'desc' }, 
@@ -93,22 +115,26 @@ export default function SiteDashboard() {
   const formatNumber = (num: number) => num >= 1000 ? (num / 1000).toFixed(1) + 'k' : num.toString();
 
   useEffect(() => {
+    if (!siteInfo.slug) return;
+    const controller = new AbortController();
     async function fetchAllData() {
       setIsLoading(true);
+      setDataError("");
       try {
         const params = new URLSearchParams({
           site: siteInfo.slug,
           days: period.toString(),
           excludeBrand: excludeBrand.toString(),
-          brands: brandKeywords,
           qPreset: activeQueryPreset !== 'All' ? activeQueryPreset : '',
           qSearch: debouncedQuerySearch,
           pPreset: activePagePreset !== 'All' ? activePagePreset : '',
           pSearch: debouncedPageSearch
         });
 
-        const response = await fetch(`/api/search-console?${params.toString()}`);
+        const response = await fetch(`/api/search-console?${params.toString()}`, { signal: controller.signal, cache: "no-store" });
         const result = await response.json();
+        if (!response.ok || !result.success) throw new Error(result.message || result.error || "خطا در دریافت اطلاعات سرچ کنسول");
+        if (controller.signal.aborted) return;
         
         if (result.success && result.data) {
           const d = result.data;
@@ -137,14 +163,22 @@ export default function SiteDashboard() {
           if (d.newRankings) setRealNewRankings(d.newRankings.map((r: any, i: number) => formatRow(r, i, r.text)));
           if (d.zombies) setRealZombies(d.zombies.map((r: any, i: number) => formatRow(r, i, decodeURI(r.text.replace(siteInfo.baseUrl.replace(/\/$/, ''), '') || '/'))));
         }
-      } catch (error) { 
-        console.error("خطا:", error); 
-      } finally { 
-        setIsLoading(false); 
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          setTotals(null);
+          setRealQueries([]); setRealPages([]); setRealChartData([]);
+          setRealContentGroups([]); setRealTopicClusters([]); setRealNewRankings([]);
+          setRealCannibalization([]); setRealStriking([]); setRealCtrBench([]);
+          setRealDecay([]); setRealZombies([]);
+          setDataError(error instanceof Error ? error.message : "خطا در دریافت داده‌ها");
+        }
+      } finally {
+        if (!controller.signal.aborted) setIsLoading(false);
       }
     }
-    fetchAllData();
-  }, [period, excludeBrand, brandKeywords, activeQueryPreset, debouncedQuerySearch, activePagePreset, debouncedPageSearch, siteInfo.slug]);
+    void fetchAllData();
+    return () => controller.abort();
+  }, [period, excludeBrand, activeQueryPreset, debouncedQuerySearch, activePagePreset, debouncedPageSearch, siteInfo.slug]);
 
   const getSortedData = (data: any[], filterMode: string, sortConfig?: { key: string, direction: 'asc' | 'desc' }) => {
     if (!data) return [];
@@ -183,7 +217,7 @@ export default function SiteDashboard() {
   const sortedTopicClusters = getSortedData(realTopicClusters, "All", sorts.TopicClusters);
   const sortedNewRankings = getSortedData(realNewRankings, "All", sorts.NewRankings);
   const activeClusterQueries = realTopicClusters.find(cluster => cluster.text === activeCluster)?.queries || [];
-  const toSiteUrl = (value: string) => new URL(value, siteInfo.baseUrl).toString();
+  const toSiteUrl = (value: string) => siteInfo.baseUrl ? new URL(value, siteInfo.baseUrl).toString() : "#";
 
   const FilterButtons = ({ activeFilter, setFilter }: { activeFilter: string, setFilter: (val: string) => void }) => (
     <div className="flex bg-gray-100 rounded-lg p-1 text-xs font-medium shrink-0">
@@ -244,7 +278,18 @@ export default function SiteDashboard() {
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <label className="text-xs font-bold text-gray-600" htmlFor="site-selector">سایت</label>
+          <select id="site-selector" dir="rtl" aria-label="انتخاب سایت" value={siteInfo.slug}
+            disabled={isLoadingSites || sites.length === 0}
+            onChange={(event) => {
+              const next = sites.find((item) => item.slug === event.target.value);
+              if (next) setSiteInfo(next);
+            }}
+            className="max-w-56 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm shadow-sm">
+            {sites.length === 0 && <option value="">سایتی موجود نیست</option>}
+            {sites.map((site) => <option key={site.slug} value={site.slug}>{site.name}</option>)}
+          </select>
           <div className="flex items-center gap-2 bg-white border border-gray-200 rounded-lg px-3 py-1.5 shadow-sm">
             <span className="text-xs font-bold text-gray-600">بدون کلمات برند</span>
             <div onClick={() => setExcludeBrand(!excludeBrand)} className={`w-8 h-4.5 rounded-full relative cursor-pointer transition-colors ${excludeBrand ? 'bg-indigo-500' : 'bg-gray-300'}`}>
@@ -279,6 +324,7 @@ export default function SiteDashboard() {
         </div>
       </div>
 
+      {(sitesError || dataError) && <div role="alert" className="mb-6 rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">{sitesError || dataError}</div>}
       <nav className="flex gap-6 text-sm font-medium border-b border-gray-200 mb-8 pb-0 gap-4">
         <button onClick={() => setActiveTab("Dashboard")} className={`pb-3 px-1 transition ${activeTab === "Dashboard" ? "text-gray-900 border-b-2 border-gray-900" : "text-gray-500 hover:text-gray-800"}`}>Dashboard</button>
         <button onClick={() => setActiveTab("Optimize")} className={`pb-3 px-1 transition flex items-center gap-1 ${activeTab === "Optimize" ? "text-purple-600 border-b-2 border-purple-600" : "text-gray-500 hover:text-gray-800"}`}><Activity size={16} /> Optimize</button>
@@ -405,9 +451,9 @@ export default function SiteDashboard() {
             <button onClick={() => setActiveOptTool('Zombie')} className={`p-4 rounded-2xl border text-right transition-all group mt-3 ${activeOptTool === 'Zombie' ? 'bg-slate-800 border-slate-700 shadow-sm' : 'bg-white border-gray-200 hover:border-slate-400'}`}>
               <div className="flex items-center gap-2 mb-2"><Ghost size={20} className={activeOptTool === 'Zombie' ? 'text-slate-100' : 'text-gray-400 group-hover:text-slate-600'} /><h3 className={`font-black ${activeOptTool === 'Zombie' ? 'text-white' : 'text-gray-700'}`}>صفحات زامبی</h3></div>
             </button>
-            <div className="mt-4 p-4 bg-slate-50 border border-gray-200 rounded-2xl">
-              <label className="text-xs font-bold text-gray-700 block mb-2 flex items-center gap-1"><ShieldAlert size={14}/> کلمات برند سایت</label>
-              <input type="text" value={brandKeywords} onChange={(e) => setBrandKeywords(e.target.value)} placeholder="مثال: دیجی خواب, digikhab" className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-indigo-400" />
+            <div className="mt-4 rounded-2xl border border-gray-200 bg-slate-50 p-4 text-xs leading-6 text-gray-600">
+              <ShieldAlert size={14} className="inline ml-1" />
+              کلمات برند هر سایت از تنظیمات پایگاه داده همان سایت خوانده می‌شوند.
             </div>
           </div>
 
