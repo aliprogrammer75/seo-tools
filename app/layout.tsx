@@ -3,7 +3,7 @@ import Link from "next/link";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "ابزار سئو | مشابه SEOGets",
+  title: "SEO Tools | داشبورد سئو",
   description: "داشبورد هوشمند سئو و تحلیل سرچ کنسول",
 };
 
@@ -28,7 +28,7 @@ export default function RootLayout({
                     <span className="text-white font-bold text-lg">S</span>
                   </div>
                   <h2 className="text-xl font-black text-gray-800 tracking-tight">
-                    سئوگتس<span className="text-blue-600 font-medium ml-1">فارسی</span>
+                    SEO<span className="text-blue-600 font-medium ml-1">Tools</span>
                   </h2>
                 </Link>
               </div>
