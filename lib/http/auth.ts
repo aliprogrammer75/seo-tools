@@ -74,7 +74,7 @@ export async function requireInternalIdentity(request: Request, env: AppEnv): Pr
       (typeof claims.nbf === "number" && claims.nbf > now)) return rejectAccess();
 
     const keys = await signingKeys(domain);
-    const candidates = keys.filter((key) => key.kid === header.kid);
+    const candidates = keys.filter((key) => (key as JsonWebKey & { kid?: string }).kid === header.kid);
     if (!candidates.length) return rejectAccess();
     const payload = new TextEncoder().encode(segments[0] + "." + segments[1]);
     const signature = signatureBytes(segments[2]);
