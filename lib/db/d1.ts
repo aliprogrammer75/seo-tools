@@ -32,5 +32,7 @@ export interface AppEnv {
   GOOGLE_SERVICE_ACCOUNT_EMAIL: string;
   GOOGLE_PRIVATE_KEY: string;
   CRON_SECRET: string;
+  TEAM_DOMAIN: string;
+  POLICY_AUD: string;
   APP_ENV?: "development" | "production";
 }
