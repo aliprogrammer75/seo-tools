@@ -13,7 +13,7 @@ interface CompletedDateRow {
 export async function GET(request: Request): Promise<Response> {
   try {
     const env = await getAppEnv();
-    requireInternalIdentity(request, env);
+    await requireInternalIdentity(request, env);
     const url = new URL(request.url);
     const siteSlug = url.searchParams.get("site")?.trim();
     const days = Number(url.searchParams.get("days") ?? "120");
