@@ -26,10 +26,14 @@ jobs:
           GOOGLE_SERVICE_ACCOUNT_EMAIL: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_EMAIL }}
           GOOGLE_PRIVATE_KEY: ${{ secrets.GOOGLE_PRIVATE_KEY }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          TEAM_DOMAIN: ${{ secrets.TEAM_DOMAIN }}
+          POLICY_AUD: ${{ secrets.POLICY_AUD }}
         run: |
           printf '%s' "$GOOGLE_SERVICE_ACCOUNT_EMAIL" | npx wrangler secret put GOOGLE_SERVICE_ACCOUNT_EMAIL
           printf '%s' "$GOOGLE_PRIVATE_KEY" | npx wrangler secret put GOOGLE_PRIVATE_KEY
           printf '%s' "$CRON_SECRET" | npx wrangler secret put CRON_SECRET
+          printf '%s' "$TEAM_DOMAIN" | npx wrangler secret put TEAM_DOMAIN
+          printf '%s' "$POLICY_AUD" | npx wrangler secret put POLICY_AUD
 
       - name: Deploy Worker
         env:
