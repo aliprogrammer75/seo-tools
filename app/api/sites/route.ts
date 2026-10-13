@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 export async function GET(request: Request): Promise<Response> {
   try {
     const env = await getAppEnv();
-    requireInternalIdentity(request, env);
+    await requireInternalIdentity(request, env);
     const sites = await listActiveSites(env.DB);
 
     return Response.json({
