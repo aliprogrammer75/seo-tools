@@ -23,6 +23,8 @@ export async function getAppEnv(): Promise<AppEnv> {
     GOOGLE_SERVICE_ACCOUNT_EMAIL: requireString(values, "GOOGLE_SERVICE_ACCOUNT_EMAIL"),
     GOOGLE_PRIVATE_KEY: requireString(values, "GOOGLE_PRIVATE_KEY"),
     CRON_SECRET: requireString(values, "CRON_SECRET"),
+    TEAM_DOMAIN: requireString(values, "TEAM_DOMAIN"),
+    POLICY_AUD: requireString(values, "POLICY_AUD"),
     APP_ENV: values.APP_ENV === "development" ? "development" : "production",
   };
 }
