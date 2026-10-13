@@ -16,6 +16,7 @@ export async function GET(request: Request): Promise<Response> {
       sites: sites.map((site) => ({
         slug: site.slug,
         name: site.name,
+        baseUrl: site.base_url,
         propertyUrl: site.gsc_property_url,
       })),
     });
