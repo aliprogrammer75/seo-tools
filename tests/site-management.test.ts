@@ -20,6 +20,7 @@ test("parses a valid HTTPS URL-prefix property and normalized brand terms", () =
 test("allows matching domain-scoped Search Console properties", () => {
   const data = parseSiteCreate({
     ...sample, baseUrl: "https://shop.example.com/", propertyUrl: "sc-domain:example.com",
+    sitemaps: ["https://shop.example.com/sitemap_index.xml"],
   });
   assert.equal(data.propertyUrl, "sc-domain:example.com");
 });
