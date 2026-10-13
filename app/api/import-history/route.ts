@@ -15,7 +15,7 @@ interface ImportRequestBody {
 export async function POST(request: Request): Promise<Response> {
   try {
     const env = await getAppEnv();
-    const identity = requireInternalIdentity(request, env);
+    const identity = await requireInternalIdentity(request, env);
     const body = (await request.json().catch(() => null)) as ImportRequestBody | null;
 
     if (!body || typeof body.siteSlug !== "string" || typeof body.date !== "string") {
