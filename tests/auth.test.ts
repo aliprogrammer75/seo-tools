@@ -11,7 +11,7 @@ const env = {
   CRON_SECRET: "a-long-random-secret",
   TEAM_DOMAIN: domain,
   POLICY_AUD: aud,
-} as AppEnv;
+} as unknown as AppEnv;
 
 const { privateKey, publicKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
 const publicJwk = { ...publicKey.export({ format: "jwk" }), kid: "key-for-tests", alg: "RS256", use: "sig" };
