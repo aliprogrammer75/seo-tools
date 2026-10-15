@@ -1,0 +1,5 @@
+import {getAppEnv} from "@/lib/runtime/cloudflare.ts";
+import {config,nonce,hash,cookie} from "@/lib/auth/oauth.ts";
+import {errorResponse} from "@/lib/http/api-error.ts";
+export const dynamic="force-dynamic";
+export async function GET(request:Request){try{const env=await getAppEnv();const cfg=config(env);const state=nonce();const verifier=nonce(48);const challenge=await hash(verifier);const url=new URL("https://accounts.google.com/o/oauth2/v2/auth");for(const [k,v] of Object.entries({client_id:cfg.id,redirect_uri:cfg.redirect,response_type:"code",scope:"openid email profile",state,code_challenge:challenge,code_challenge_method:"S256",access_type:"offline",prompt:"select_account"}))url.searchParams.set(k,v);const headers=new Headers({"Location":url.toString(),"Cache-Control":"no-store"});headers.append("Set-Cookie",cookie("seo_oauth_state",state,600));headers.append("Set-Cookie",cookie("seo_oauth_verifier",verifier,600));return new Response(null,{status:302,headers});}catch(e){return errorResponse(e)}}
