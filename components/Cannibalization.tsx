@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { AlertTriangle, Trophy, ExternalLink, ChevronDown, ChevronUp } from "lucide-react";
 
-export default function Cannibalization({ data }: { data: any[] }) {
+export default function Cannibalization({ data, baseUrl }: { data: any[], baseUrl: string }) {
   const [expandedRow, setExpandedRow] = useState<number | null>(null);
   
   const [sortKey, setSortKey] = useState("totalClicks");
@@ -39,7 +39,7 @@ export default function Cannibalization({ data }: { data: any[] }) {
           <div>
             <h2 className="text-xl font-black text-slate-800 mb-2">هم‌خواری کلمات کلیدی (Cannibalization)</h2>
             <p className="text-slate-600 text-sm leading-relaxed max-w-4xl">
-              در این بخش، کلماتی را مشاهده می‌کنید که بیشتر از یک صفحه از سایت شما برای آن‌ها در گوگل رقابت می‌کنند. ردیف‌هایی که با لیبل <strong className="text-rose-600">بحرانی</strong> مشخص شده‌اند، یعنی فاصله رتبه دو صفحه کمتر از ۵ پوزیشن است و در حال تخریبِ یکدیگر هستند!
+              این گزارش فقط زمانی هشدار می‌دهد که حداقل دو صفحه سهم معناداری از ایمپرشن داشته باشند و برندهٔ روزانه بین آن‌ها جابه‌جا شود. برچسب <strong className="text-rose-600">بحرانی</strong> نشانهٔ رقابت محتمل است و پیش از ادغام یا ریدایرکت باید دستی بررسی شود.
             </p>
           </div>
         </div>
@@ -103,7 +103,7 @@ export default function Cannibalization({ data }: { data: any[] }) {
                           ) : (
                             <div className="bg-gray-100 text-gray-400 p-2 rounded-lg"><ExternalLink size={18} /></div>
                           )}
-                          <a href={`https://exir.vip${page.url}`} target="_blank" className="text-sm font-medium text-slate-700 hover:text-blue-600 truncate" dir="ltr">
+                          <a href={new URL(page.url, baseUrl).toString()} target="_blank" rel="noreferrer" className="text-sm font-medium text-slate-700 hover:text-blue-600 truncate" dir="ltr">
                             {page.url}
                           </a>
                         </div>

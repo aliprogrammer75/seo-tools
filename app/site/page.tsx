@@ -21,7 +21,34 @@ export default function SiteDashboard() {
   const menuRef = useRef<HTMLDivElement>(null);
 
   const [excludeBrand, setExcludeBrand] = useState(true);
-  const [brandKeywords, setBrandKeywords] = useState("exir, اکسیر");
+  const [siteInfo, setSiteInfo] = useState({ slug: "", name: "", baseUrl: "" });
+  const [sites, setSites] = useState<Array<{ slug: string; name: string; baseUrl: string }>>([]);
+  const [sitesError, setSitesError] = useState("");
+  const [dataError, setDataError] = useState("");
+  const [isLoadingSites, setIsLoadingSites] = useState(true);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    async function loadSites() {
+      try {
+        const response = await fetch("/api/sites", { cache: "no-store", signal: controller.signal });
+        const body = await response.json();
+        if (!response.ok || !body.success || !Array.isArray(body.sites)) {
+          throw new Error(body.message || body.error || "دریافت فهرست سایت‌ها ناموفق بود.");
+        }
+        const options = body.sites.filter((site: {slug?: string; baseUrl?: string}) => site.slug && site.baseUrl);
+        setSites(options);
+        if (options.length === 0) setSitesError("هیچ سایت فعالی ثبت نشده است.");
+        else setSiteInfo(options[0]);
+      } catch (error) {
+        if (!controller.signal.aborted) setSitesError(error instanceof Error ? error.message : "خطا در دریافت سایت‌ها");
+      } finally {
+        if (!controller.signal.aborted) setIsLoadingSites(false);
+      }
+    }
+    void loadSites();
+    return () => controller.abort();
+  }, []);
   
   const [querySearchInput, setQuerySearchInput] = useState("");
   const [debouncedQuerySearch, setDebouncedQuerySearch] = useState("");
@@ -75,7 +102,7 @@ export default function SiteDashboard() {
   const [realZombies, setRealZombies] = useState<any[]>([]);
 
   const [totals, setTotals] = useState<any>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(false);
 
   const [sorts, setSorts] = useState<Record<string, { key: string, direction: 'asc' | 'desc' }>>({
     TopicClusters: { key: 'clicks', direction: 'desc' }, 
@@ -88,24 +115,30 @@ export default function SiteDashboard() {
   const formatNumber = (num: number) => num >= 1000 ? (num / 1000).toFixed(1) + 'k' : num.toString();
 
   useEffect(() => {
+    if (!siteInfo.slug) return;
+    const controller = new AbortController();
     async function fetchAllData() {
       setIsLoading(true);
+      setDataError("");
       try {
         const params = new URLSearchParams({
+          site: siteInfo.slug,
           days: period.toString(),
           excludeBrand: excludeBrand.toString(),
-          brands: brandKeywords,
           qPreset: activeQueryPreset !== 'All' ? activeQueryPreset : '',
           qSearch: debouncedQuerySearch,
           pPreset: activePagePreset !== 'All' ? activePagePreset : '',
           pSearch: debouncedPageSearch
         });
 
-        const response = await fetch(`/api/search-console?${params.toString()}`);
+        const response = await fetch(`/api/search-console?${params.toString()}`, { signal: controller.signal, cache: "no-store" });
         const result = await response.json();
+        if (!response.ok || !result.success) throw new Error(result.message || result.error || "خطا در دریافت اطلاعات سرچ کنسول");
+        if (controller.signal.aborted) return;
         
         if (result.success && result.data) {
           const d = result.data;
+          if (result.site) setSiteInfo(result.site);
           setTotals(d.totals || null);
           setRealChartData(d.chartData || []);
           setRealCannibalization(d.cannibalizationData || []); 
@@ -124,20 +157,28 @@ export default function SiteDashboard() {
           });
 
           if (d.queries) setRealQueries(d.queries.map((r: any, i: number) => formatRow(r, i, r.text)));
-          if (d.pages) setRealPages(d.pages.map((r: any, i: number) => formatRow(r, i, decodeURI(r.text.replace('https://exir.vip', '') || '/'))));
+          if (d.pages) setRealPages(d.pages.map((r: any, i: number) => formatRow(r, i, decodeURI(r.text.replace(siteInfo.baseUrl.replace(/\/$/, ''), '') || '/'))));
           if (d.contentGroups) setRealContentGroups(d.contentGroups.map((r: any, i: number) => formatRow(r, i, r.text)));
           if (d.topicClusters) setRealTopicClusters(d.topicClusters.map((r: any, i: number) => formatRow(r, i, r.text)));
           if (d.newRankings) setRealNewRankings(d.newRankings.map((r: any, i: number) => formatRow(r, i, r.text)));
-          if (d.zombies) setRealZombies(d.zombies.map((r: any, i: number) => formatRow(r, i, decodeURI(r.text.replace('https://exir.vip', '') || '/'))));
+          if (d.zombies) setRealZombies(d.zombies.map((r: any, i: number) => formatRow(r, i, decodeURI(r.text.replace(siteInfo.baseUrl.replace(/\/$/, ''), '') || '/'))));
         }
-      } catch (error) { 
-        console.error("خطا:", error); 
-      } finally { 
-        setIsLoading(false); 
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          setTotals(null);
+          setRealQueries([]); setRealPages([]); setRealChartData([]);
+          setRealContentGroups([]); setRealTopicClusters([]); setRealNewRankings([]);
+          setRealCannibalization([]); setRealStriking([]); setRealCtrBench([]);
+          setRealDecay([]); setRealZombies([]);
+          setDataError(error instanceof Error ? error.message : "خطا در دریافت داده‌ها");
+        }
+      } finally {
+        if (!controller.signal.aborted) setIsLoading(false);
       }
     }
-    fetchAllData();
-  }, [period, excludeBrand, brandKeywords, activeQueryPreset, debouncedQuerySearch, activePagePreset, debouncedPageSearch]);
+    void fetchAllData();
+    return () => controller.abort();
+  }, [period, excludeBrand, activeQueryPreset, debouncedQuerySearch, activePagePreset, debouncedPageSearch, siteInfo.slug]);
 
   const getSortedData = (data: any[], filterMode: string, sortConfig?: { key: string, direction: 'asc' | 'desc' }) => {
     if (!data) return [];
@@ -175,6 +216,8 @@ export default function SiteDashboard() {
   const sortedContentGroups = getSortedData(realContentGroups, "All", sorts.ContentGroups);
   const sortedTopicClusters = getSortedData(realTopicClusters, "All", sorts.TopicClusters);
   const sortedNewRankings = getSortedData(realNewRankings, "All", sorts.NewRankings);
+  const activeClusterQueries = realTopicClusters.find(cluster => cluster.text === activeCluster)?.queries || [];
+  const toSiteUrl = (value: string) => siteInfo.baseUrl ? new URL(value, siteInfo.baseUrl).toString() : "#";
 
   const FilterButtons = ({ activeFilter, setFilter }: { activeFilter: string, setFilter: (val: string) => void }) => (
     <div className="flex bg-gray-100 rounded-lg p-1 text-xs font-medium shrink-0">
@@ -231,11 +274,22 @@ export default function SiteDashboard() {
         <div className="flex items-center gap-2 text-gray-500 text-sm">
           <Link href="/" className="hover:text-gray-800 transition font-medium">سئوگتس</Link><span>/</span>
           <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-md border border-gray-200 shadow-sm text-gray-800 font-bold" dir="ltr">
-            <span className="text-purple-500">🌐</span> https://exir.vip/
+            <span className="text-purple-500">🌐</span> {siteInfo.baseUrl}
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <label className="text-xs font-bold text-gray-600" htmlFor="site-selector">سایت</label>
+          <select id="site-selector" dir="rtl" aria-label="انتخاب سایت" value={siteInfo.slug}
+            disabled={isLoadingSites || sites.length === 0}
+            onChange={(event) => {
+              const next = sites.find((item) => item.slug === event.target.value);
+              if (next) setSiteInfo(next);
+            }}
+            className="max-w-56 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm shadow-sm">
+            {sites.length === 0 && <option value="">سایتی موجود نیست</option>}
+            {sites.map((site) => <option key={site.slug} value={site.slug}>{site.name}</option>)}
+          </select>
           <div className="flex items-center gap-2 bg-white border border-gray-200 rounded-lg px-3 py-1.5 shadow-sm">
             <span className="text-xs font-bold text-gray-600">بدون کلمات برند</span>
             <div onClick={() => setExcludeBrand(!excludeBrand)} className={`w-8 h-4.5 rounded-full relative cursor-pointer transition-colors ${excludeBrand ? 'bg-indigo-500' : 'bg-gray-300'}`}>
@@ -270,6 +324,7 @@ export default function SiteDashboard() {
         </div>
       </div>
 
+      {(sitesError || dataError) && <div role="alert" className="mb-6 rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">{sitesError || dataError}</div>}
       <nav className="flex gap-6 text-sm font-medium border-b border-gray-200 mb-8 pb-0 gap-4">
         <button onClick={() => setActiveTab("Dashboard")} className={`pb-3 px-1 transition ${activeTab === "Dashboard" ? "text-gray-900 border-b-2 border-gray-900" : "text-gray-500 hover:text-gray-800"}`}>Dashboard</button>
         <button onClick={() => setActiveTab("Optimize")} className={`pb-3 px-1 transition flex items-center gap-1 ${activeTab === "Optimize" ? "text-purple-600 border-b-2 border-purple-600" : "text-gray-500 hover:text-gray-800"}`}><Activity size={16} /> Optimize</button>
@@ -388,7 +443,7 @@ export default function SiteDashboard() {
               <div className="flex items-center gap-2 mb-2"><Target size={20} className={activeOptTool === 'Striking' ? 'text-blue-500' : 'text-gray-400 group-hover:text-blue-500'} /><h3 className={`font-black ${activeOptTool === 'Striking' ? 'text-blue-900' : 'text-gray-700'}`}>کلمات در یک قدمی</h3></div>
             </button>
             <button onClick={() => setActiveOptTool('CTR')} className={`p-4 rounded-2xl border text-right transition-all group ${activeOptTool === 'CTR' ? 'bg-teal-50 border-teal-200 shadow-sm' : 'bg-white border-gray-200 hover:border-teal-300'}`}>
-              <div className="flex items-center gap-2 mb-2"><MousePointerClick size={20} className={activeOptTool === 'CTR' ? 'text-teal-500' : 'text-gray-400 group-hover:text-teal-500'} /><h3 className={`font-black ${activeOptTool === 'CTR' ? 'text-teal-900' : 'text-gray-700'}`}>قاتل تایتل‌ها (CTR)</h3></div>
+              <div className="flex items-center gap-2 mb-2"><MousePointerClick size={20} className={activeOptTool === 'CTR' ? 'text-teal-500' : 'text-gray-400 group-hover:text-teal-500'} /><h3 className={`font-black ${activeOptTool === 'CTR' ? 'text-teal-900' : 'text-gray-700'}`}>فرصت‌های CTR</h3></div>
             </button>
             <button onClick={() => setActiveOptTool('Cannibalization')} className={`p-4 rounded-2xl border text-right transition-all group ${activeOptTool === 'Cannibalization' ? 'bg-rose-50 border-rose-200 shadow-sm' : 'bg-white border-gray-200 hover:border-rose-300'}`}>
               <div className="flex items-center gap-2 mb-2"><AlertCircle size={20} className={activeOptTool === 'Cannibalization' ? 'text-rose-500' : 'text-gray-400 group-hover:text-rose-500'} /><h3 className={`font-black ${activeOptTool === 'Cannibalization' ? 'text-rose-900' : 'text-gray-700'}`}>هم‌خواری کلمات</h3></div>
@@ -396,9 +451,9 @@ export default function SiteDashboard() {
             <button onClick={() => setActiveOptTool('Zombie')} className={`p-4 rounded-2xl border text-right transition-all group mt-3 ${activeOptTool === 'Zombie' ? 'bg-slate-800 border-slate-700 shadow-sm' : 'bg-white border-gray-200 hover:border-slate-400'}`}>
               <div className="flex items-center gap-2 mb-2"><Ghost size={20} className={activeOptTool === 'Zombie' ? 'text-slate-100' : 'text-gray-400 group-hover:text-slate-600'} /><h3 className={`font-black ${activeOptTool === 'Zombie' ? 'text-white' : 'text-gray-700'}`}>صفحات زامبی</h3></div>
             </button>
-            <div className="mt-4 p-4 bg-slate-50 border border-gray-200 rounded-2xl">
-              <label className="text-xs font-bold text-gray-700 block mb-2 flex items-center gap-1"><ShieldAlert size={14}/> کلمات برند سایت</label>
-              <input type="text" value={brandKeywords} onChange={(e) => setBrandKeywords(e.target.value)} placeholder="مثال: exir, اکسیر" className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-indigo-400" />
+            <div className="mt-4 rounded-2xl border border-gray-200 bg-slate-50 p-4 text-xs leading-6 text-gray-600">
+              <ShieldAlert size={14} className="inline ml-1" />
+              کلمات برند هر سایت از تنظیمات پایگاه داده همان سایت خوانده می‌شوند.
             </div>
           </div>
 
@@ -419,7 +474,7 @@ export default function SiteDashboard() {
                     <tr key={idx} className="hover:bg-blue-50/30 transition">
                       <td className="py-4 font-bold text-right">
                         <div className="text-slate-800">{item.text}</div>
-                        {item.url && <a href={`https://exir.vip${item.url}`} target="_blank" className="text-[10px] text-blue-500 hover:text-blue-700 font-medium truncate max-w-[250px] block mt-1" dir="ltr">{decodeURI(item.url)}</a>}
+                        {item.url && <a href={toSiteUrl(item.url)} target="_blank" rel="noreferrer" className="text-[10px] text-blue-500 hover:text-blue-700 font-medium truncate max-w-[250px] block mt-1" dir="ltr">{decodeURI(item.url)}</a>}
                       </td>
                       <td className="font-black text-orange-600">{item.position.toFixed(1)}</td>
                       <td>{formatNumber(item.impressions)}</td>
@@ -431,13 +486,13 @@ export default function SiteDashboard() {
             )}
             {activeOptTool === 'CTR' && (
               <div className="animate-fade-in">
-                <div className="mb-6"><h2 className="text-xl font-black text-gray-800 mb-2">قاتل تایتل‌ها</h2><p className="text-sm text-gray-500">کلماتی که رتبه عالی دارند اما کلیک نمی‌خورند. با کلیک روی آدرس، تایتل صفحه را ویرایش کنید.</p></div>
+                <div className="mb-6"><h2 className="text-xl font-black text-gray-800 mb-2">فرصت‌های بهبود CTR</h2><p className="text-sm text-gray-500">CTR این کوئری‌ها با معیار تاریخی غیر‌برند همین سایت و با کنترل حداقل حجم و معناداری آماری مقایسه شده است.</p></div>
                 <table className="w-full text-sm text-left"><thead className="text-xs text-gray-400 border-b border-gray-100"><tr><th className="py-3 font-bold text-right">کلمه و آدرس صفحه</th><th>افت کلیک</th><th>CTR واقعی</th><th>انتظار</th></tr></thead><tbody className="divide-y divide-gray-50">
                   {realCtrBench.map((item, idx) => (
                     <tr key={idx} className="hover:bg-teal-50/30 transition">
                       <td className="py-4 font-bold text-right">
                         <div className="text-slate-800">{item.text}</div>
-                        {item.url && <a href={`https://exir.vip${item.url}`} target="_blank" className="text-[10px] text-teal-600 hover:text-teal-800 font-medium truncate max-w-[250px] block mt-1" dir="ltr">{decodeURI(item.url)}</a>}
+                        {item.url && <a href={toSiteUrl(item.url)} target="_blank" rel="noreferrer" className="text-[10px] text-teal-600 hover:text-teal-800 font-medium truncate max-w-[250px] block mt-1" dir="ltr">{decodeURI(item.url)}</a>}
                       </td>
                       <td className="text-rose-600 font-bold">-{item.missedClicks}</td>
                       <td>{item.ctr.toFixed(1)}%</td>
@@ -447,10 +502,10 @@ export default function SiteDashboard() {
                 </tbody></table>
               </div>
             )}
-            {activeOptTool === 'Cannibalization' && (<div className="-m-6"><Cannibalization data={realCannibalization} /></div>)}
+            {activeOptTool === 'Cannibalization' && (<div className="-m-6"><Cannibalization data={realCannibalization} baseUrl={siteInfo.baseUrl} /></div>)}
             {activeOptTool === 'Zombie' && (
               <div className="animate-fade-in">
-                <div className="mb-6"><h2 className="text-xl font-black text-gray-800 mb-2">شکارچی صفحات زامبی 🧟‍♂️</h2><p className="text-sm text-gray-500">حداقل ۱۰۰ ایمپرشن و صفر کلیک.</p></div>
+                <div className="mb-6"><h2 className="text-xl font-black text-gray-800 mb-2">صفحات کم‌عملکرد برای بازبینی</h2><p className="text-sm text-gray-500">حداقل ۲۰۰ ایمپرشن، صفر کلیک، رتبه ۱۵ به بعد و در صورت وجود Sitemap حداقل ۹۰ روز عمر. این فهرست حکم حذف خودکار نیست.</p></div>
                 <table className="w-full text-sm text-left"><thead className="text-xs text-gray-400 border-b border-gray-100"><tr><th className="py-3 font-bold text-right">آدرس صفحه</th><th className="w-20 text-center">کلیک</th><th className="w-24 text-center">ایمپرشن</th></tr></thead><tbody className="divide-y divide-gray-50">
                   {realZombies.map((item, idx) => (<tr key={idx} className="hover:bg-slate-50/80 transition"><td className="py-4 font-medium text-slate-700 text-right truncate max-w-[200px]" dir="ltr">{item.text}</td><td className="text-rose-500 font-black text-center">0</td><td className="text-purple-600 font-bold text-center">{formatNumber(item.impressions)}</td></tr>))}
                 </tbody></table>
@@ -493,7 +548,7 @@ export default function SiteDashboard() {
             </div>
             <div className="p-6 overflow-y-auto overflow-x-auto custom-scrollbar" style={{ maxHeight: 'calc(85vh - 90px)' }}>
               <div className="space-y-1.5 text-sm min-w-[600px]">
-                {realQueries.filter(q => q.text.toLowerCase().includes(activeCluster.toLowerCase())).map(item => (
+                {realQueries.filter(q => activeClusterQueries.includes(q.text)).map(item => (
                     <div key={item.id} className="relative group overflow-hidden rounded-md border border-gray-50 p-3 hover:border-blue-100 hover:bg-blue-50/30 transition">
                       <div className="absolute top-0 right-0 h-full bg-blue-50/50 -z-10" style={{ width: `${item.progress}%` }}></div>
                       <div className="flex justify-between items-center"><span className="font-bold text-slate-700 truncate max-w-[40%] flex items-center">{item.text} <RankBadge rank={item.position} /></span><TableMetrics item={item} /></div>

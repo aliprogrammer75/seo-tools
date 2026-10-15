@@ -1,39 +1,62 @@
-import { NextResponse } from 'next/server';
+import { listActiveSites } from "@/lib/db/sites.ts";
+import { errorResponse } from "@/lib/http/api-error.ts";
+import { requireCronAuthorization } from "@/lib/http/auth.ts";
+import { getAppEnv } from "@/lib/runtime/cloudflare.ts";
+import { latestFinalSearchConsoleDate } from "@/lib/sync/date.ts";
+import { importSiteDay } from "@/lib/sync/runtime.ts";
 
-export const dynamic = 'force-dynamic';
+export const dynamic = "force-dynamic";
 
-export async function GET(request: Request) {
+interface SiteSyncResult {
+  siteSlug: string;
+  success: boolean;
+  status?: "completed" | "skipped";
+  importedRows?: number;
+  error?: string;
+}
+
+function publicErrorMessage(error: unknown): string {
+  return (error instanceof Error ? error.message : "Unknown sync error").slice(0, 500);
+}
+
+async function handleSync(request: Request): Promise<Response> {
   try {
-    // 🛡️ بخش امنیتی: فقط رباتی که رمز عبور دارد می‌تواند این API را اجرا کند
-    const authHeader = request.headers.get('authorization');
-    if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
-      return NextResponse.json({ error: 'شما اجازه اجرای این دستور را ندارید!' }, { status: 401 });
+    const env = await getAppEnv();
+    requireCronAuthorization(request, env);
+    const date = latestFinalSearchConsoleDate();
+    const sites = await listActiveSites(env.DB);
+    const results: SiteSyncResult[] = [];
+
+    for (const site of sites) {
+      try {
+        const result = await importSiteDay({ env, site, date, requestedBy: "cron" });
+        results.push({
+          siteSlug: site.slug,
+          success: true,
+          status: result.status,
+          importedRows: result.importedRows,
+        });
+      } catch (error) {
+        console.error("Scheduled Search Console sync failed", { site: site.slug, date, error });
+        results.push({ siteSlug: site.slug, success: false, error: publicErrorMessage(error) });
+      }
     }
 
-    // 🌐 آدرس بک‌اند فعلی شما برای اجرای عملیات Import
-    const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'https://exir.vip/';
-    
-    // در اینجا ما به صورت خودکار به فایل import-history دستور می‌دهیم که دیتای روز جدید را بگیرد
-    const syncResponse = await fetch(`${baseUrl}/api/import-history`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ isAutoSync: true }) 
-    });
-
-    if (!syncResponse.ok) {
-      throw new Error('خطا در ارتباط با موتور ایمپورت سرچ کنسول');
-    }
-
-    const result = await syncResponse.json();
-
-    return NextResponse.json({ 
-      success: true, 
-      message: 'سینک خودکار با موفقیت انجام شد 🚀', 
-      details: result 
-    });
-
-  } catch (error: any) {
-    console.error('Auto Sync Error:', error);
-    return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+    const failed = results.filter((result) => !result.success).length;
+    return Response.json(
+      {
+        success: failed === 0,
+        date,
+        siteCount: sites.length,
+        failed,
+        results,
+      },
+      { status: failed === 0 ? 200 : 207 },
+    );
+  } catch (error) {
+    return errorResponse(error);
   }
 }
+
+export const GET = handleSync;
+export const POST = handleSync;

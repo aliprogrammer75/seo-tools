@@ -1,143 +1,201 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
+
+interface SiteOption {
+  slug: string;
+  name: string;
+  propertyUrl: string;
+}
+
+interface ApiErrorBody {
+  success?: boolean;
+  error?: string;
+  message?: string;
+}
+
+async function readJson(response: Response): Promise<ApiErrorBody & Record<string, unknown>> {
+  const body = (await response.json().catch(() => ({}))) as ApiErrorBody &
+    Record<string, unknown>;
+  if (!response.ok) throw new Error(body.error ?? `HTTP ${response.status}`);
+  return body;
+}
 
 export default function ImportHistory() {
+  const [sites, setSites] = useState<SiteOption[]>([]);
+  const [siteSlug, setSiteSlug] = useState("");
   const [logs, setLogs] = useState<string[]>([]);
   const [progress, setProgress] = useState(0);
   const [isImporting, setIsImporting] = useState(false);
   const [missingDates, setMissingDates] = useState<string[]>([]);
   const [isChecking, setIsChecking] = useState(true);
 
-  // به محض باز شدن صفحه، دیتابیس را اسکن می‌کند
-  useEffect(() => {
-    checkDatabase();
+  const checkDatabase = useCallback(async (selectedSite: string) => {
+    if (!selectedSite) return;
+    setIsChecking(true);
+    setProgress(0);
+    setLogs(["در حال بررسی روزهای کامل‌شده در D1..."]);
+
+    try {
+      const response = await fetch(
+        `/api/check-dates?site=${encodeURIComponent(selectedSite)}&days=120`,
+        { cache: "no-store" },
+      );
+      const data = await readJson(response);
+      const dates = Array.isArray(data.missingDates)
+        ? data.missingDates.filter((value): value is string => typeof value === "string")
+        : [];
+      const existingCount = typeof data.existingCount === "number" ? data.existingCount : 0;
+      setMissingDates(dates);
+      setLogs([
+        `${existingCount.toLocaleString("fa-IR")} روز کامل در بازه موجود است.`,
+        dates.length === 0
+          ? "داده‌های نهایی این بازه کامل است."
+          : `${dates.length.toLocaleString("fa-IR")} روز نیاز به دریافت یا تکمیل دارد.`,
+      ]);
+    } catch (error) {
+      setMissingDates([]);
+      setLogs([`خطا در بررسی دیتابیس: ${error instanceof Error ? error.message : "نامشخص"}`]);
+    } finally {
+      setIsChecking(false);
+    }
   }, []);
 
-  const checkDatabase = async () => {
-    setIsChecking(true);
-    setLogs(["🔍 در حال اسکن دیتابیس کلادفلر..."]);
-    try {
-      const res = await fetch('/api/check-dates');
-      const data = await res.json();
-      
-      if (data.success) {
-        setMissingDates(data.missingDates);
-        setLogs([
-          `📊 وضعیت دیتابیس: ${data.existingCount} روز با موفقیت ذخیره شده است.`,
-          `⚠️ تعداد روزهای جاافتاده: ${data.missingDates.length} روز`
-        ]);
-      } else {
-        setLogs(["❌ خطا در اسکن دیتابیس"]);
-      }
-    } catch (error) {
-      setLogs(["❌ خطای ارتباط با سرور"]);
-    }
-    setIsChecking(false);
-  };
-
-  const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
-
-  const startImport = async () => {
-    if (missingDates.length === 0) {
-       setLogs(prev => ["🎉 دیتابیس شما کاملاً آپدیت است و هیچ روز جاافتاده‌ای وجود ندارد!", ...prev]);
-       return;
-    }
-
-    setIsImporting(true);
-    setLogs(prev => ["🚀 شروع عملیات ترمیم (فقط برای روزهای جاافتاده)...", ...prev]);
-
-    // حلقه فقط روی همان ۴ روز جاافتاده می‌چرخد!
-    for (let i = 0; i < missingDates.length; i++) {
-      const date = missingDates[i];
+  useEffect(() => {
+    let active = true;
+    void (async () => {
       try {
-        setLogs(prev => [`⏳ در حال دریافت تاریخ ${date} ...`, ...prev]);
-        
-        const res = await fetch(`/api/import-history?date=${date}`);
-        const contentType = res.headers.get("content-type");
-        
-        if (contentType && contentType.indexOf("application/json") !== -1) {
-          const data = await res.json();
-          if (data.success) {
-            setLogs(prev => [`✅ ${data.message}`, ...prev]);
-          } else {
-            setLogs(prev => [`❌ خطا در ${date}: ${data.error}`, ...prev]);
-          }
-        } else {
-          setLogs(prev => [`🛑 مسدود شدن موقت (گوگل). لطفاً بعداً تلاش کنید.`, ...prev]);
-          break; // توقف در صورت بلاک شدن
-        }
-
-      } catch (err) {
-        setLogs(prev => [`❌ خطای شبکه در تاریخ ${date}`, ...prev]);
+        const response = await fetch("/api/sites", { cache: "no-store" });
+        const data = await readJson(response);
+        const options = Array.isArray(data.sites) ? (data.sites as SiteOption[]) : [];
+        if (!active) return;
+        setSites(options);
+        setSiteSlug(options[0]?.slug ?? "");
+      } catch (error) {
+        if (!active) return;
+        setIsChecking(false);
+        setLogs([`خطا در دریافت سایت‌ها: ${error instanceof Error ? error.message : "نامشخص"}`]);
       }
-      
-      setProgress(Math.round(((i + 1) / missingDates.length) * 100));
-      await delay(3000); 
+    })();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (siteSlug) void checkDatabase(siteSlug);
+  }, [checkDatabase, siteSlug]);
+
+  async function startImport() {
+    if (!siteSlug || missingDates.length === 0) return;
+    const queue = [...missingDates];
+    setIsImporting(true);
+    setProgress(0);
+    setLogs((current) => ["ترمیم ترتیبی روزهای ناقص شروع شد.", ...current]);
+
+    let completed = 0;
+    for (const date of queue) {
+      try {
+        setLogs((current) => [`در حال دریافت ${date}...`, ...current]);
+        const response = await fetch("/api/import-history", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ siteSlug, date }),
+        });
+        const data = await readJson(response);
+        setLogs((current) => [data.message ?? `${date} تکمیل شد.`, ...current]);
+      } catch (error) {
+        setLogs((current) => [
+          `توقف در ${date}: ${error instanceof Error ? error.message : "خطای نامشخص"}`,
+          "با اجرای دوباره، مرحله‌های کامل‌شده تکرار نمی‌شوند.",
+          ...current,
+        ]);
+        break;
+      }
+
+      completed += 1;
+      setProgress(Math.round((completed / queue.length) * 100));
     }
 
-    setLogs(prev => ["🎉 عملیات ترمیم با موفقیت به پایان رسید!", ...prev]);
     setIsImporting(false);
-    checkDatabase(); // اسکن مجدد برای اطمینان از کامل شدن
-  };
+    await checkDatabase(siteSlug);
+  }
 
   return (
-    <div className="min-h-screen bg-gray-50 p-10 font-[vazir]" dir="rtl">
-      <div className="max-w-3xl mx-auto bg-white p-8 rounded-2xl shadow-sm border border-gray-200">
-        <h1 className="text-2xl font-black text-gray-800 mb-2">اسکنر و ماشین زمان سئوگتس ⏳</h1>
-        <p className="text-gray-500 mb-8 text-sm leading-relaxed">
-          این ابزار دیتابیس شما را بررسی کرده و فقط روزهایی که استخراج نشده‌اند را دانلود می‌کند.
+    <main className="min-h-screen bg-slate-50 p-6 text-slate-900 sm:p-10" dir="rtl">
+      <section className="mx-auto max-w-3xl rounded-2xl border border-slate-200 bg-white p-6 shadow-sm sm:p-8">
+        <h1 className="text-2xl font-black">ورود تاریخچه سرچ کنسول</h1>
+        <p className="mt-2 text-sm leading-7 text-slate-500">
+          فقط روزهای نهایی گوگل بررسی می‌شوند. هر روز پس از تکمیل هر پنج بُعد به داشبورد راه پیدا می‌کند.
         </p>
 
-        {/* نمایش روزهای جاافتاده به کاربر */}
+        <label className="mt-6 block text-sm font-bold" htmlFor="site">
+          سایت
+        </label>
+        <select
+          id="site"
+          value={siteSlug}
+          onChange={(event) => setSiteSlug(event.target.value)}
+          disabled={isImporting || sites.length === 0}
+          className="mt-2 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 disabled:opacity-60"
+        >
+          {sites.map((site) => (
+            <option key={site.slug} value={site.slug}>
+              {site.name} — {site.propertyUrl}
+            </option>
+          ))}
+        </select>
+
         {!isChecking && missingDates.length > 0 && (
-          <div className="mb-6 bg-orange-50 border border-orange-200 text-orange-800 p-4 rounded-xl text-sm font-medium flex flex-col gap-2">
-            <span>⚠️ این {missingDates.length} روز در دیتابیس شما وجود ندارند:</span>
-            <div className="flex flex-wrap gap-2 mt-1" dir="ltr">
-              {missingDates.map(d => (
-                <span key={d} className="bg-white px-2 py-1 rounded border border-orange-200 shadow-sm">{d}</span>
+          <div className="mt-6 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+            <p className="font-bold">
+              {missingDates.length.toLocaleString("fa-IR")} روز ناقص یا دریافت‌نشده
+            </p>
+            <div className="mt-3 flex max-h-28 flex-wrap gap-2 overflow-y-auto" dir="ltr">
+              {missingDates.map((date) => (
+                <span key={date} className="rounded-md border border-amber-200 bg-white px-2 py-1">
+                  {date}
+                </span>
               ))}
             </div>
           </div>
         )}
 
         <button
-          onClick={startImport}
-          disabled={isImporting || isChecking || missingDates.length === 0}
-          className={`w-full py-4 rounded-xl font-bold text-lg text-white transition-all ${
-            isImporting || isChecking ? 'bg-gray-400 cursor-wait' : 
-            missingDates.length === 0 ? 'bg-green-500 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 shadow-lg hover:shadow-blue-600/30'
-          }`}
+          type="button"
+          onClick={() => void startImport()}
+          disabled={isChecking || isImporting || missingDates.length === 0 || !siteSlug}
+          className="mt-6 w-full rounded-xl bg-blue-600 px-4 py-4 text-base font-bold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-400"
         >
-          {isChecking ? 'در حال اسکن...' : 
-           isImporting ? 'در حال ترمیم دیتابیس...' : 
-           missingDates.length === 0 ? 'دیتابیس کامل است ✅' : `🚀 دانلود ${missingDates.length} روز جاافتاده`}
+          {isChecking
+            ? "در حال بررسی..."
+            : isImporting
+              ? "در حال دریافت و ذخیره امن..."
+              : missingDates.length === 0
+                ? "بازه انتخابی کامل است"
+                : `دریافت ${missingDates.length.toLocaleString("fa-IR")} روز`}
         </button>
 
         {progress > 0 && (
-          <div className="mt-8">
-            <div className="flex justify-between text-sm mb-3 font-bold text-gray-700">
-              <span>پیشرفت ترمیم:</span>
-              <span className="text-blue-600">{progress}%</span>
+          <div className="mt-6">
+            <div className="mb-2 flex justify-between text-sm font-bold">
+              <span>پیشرفت</span>
+              <span>{progress.toLocaleString("fa-IR")}%</span>
             </div>
-            <div className="w-full bg-gray-100 rounded-full h-4 overflow-hidden shadow-inner">
-              <div className="bg-blue-500 h-4 rounded-full transition-all duration-500 relative" style={{ width: `${progress}%` }}></div>
+            <div className="h-3 overflow-hidden rounded-full bg-slate-100">
+              <div className="h-full bg-blue-600 transition-all" style={{ width: `${progress}%` }} />
             </div>
           </div>
         )}
 
-        <div className="mt-8 bg-slate-900 rounded-xl p-4 h-80 overflow-y-auto text-xs font-mono shadow-inner flex flex-col-reverse" dir="rtl">
-          {logs.map((log, idx) => (
-            <div key={idx} className={`mb-2 py-1 border-b border-slate-800/50 ${
-              log.includes('✅') || log.includes('🎉') ? 'text-green-400' : 
-              log.includes('❌') || log.includes('🛑') ? 'text-rose-400' : 
-              log.includes('⚠️') ? 'text-orange-400' : 'text-blue-300'
-            }`}>
+        <div className="mt-6 h-72 overflow-y-auto rounded-xl bg-slate-950 p-4 text-xs leading-6 text-slate-200">
+          {logs.map((log, index) => (
+            <p key={`${index}-${log}`} className="border-b border-slate-800 py-1 last:border-0">
               {log}
-            </div>
+            </p>
           ))}
         </div>
-      </div>
-    </div>
+      </section>
+    </main>
   );
 }
