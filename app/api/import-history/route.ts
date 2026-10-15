@@ -1,6 +1,7 @@
 import { getSiteConfiguration } from "@/lib/db/sites.ts";
 import { ApiError, errorResponse } from "@/lib/http/api-error.ts";
 import { requireInternalIdentity } from "@/lib/http/auth.ts";
+import { session, siteAccess } from "@/lib/auth/session.ts";
 import { getAppEnv } from "@/lib/runtime/cloudflare.ts";
 import { assertIsoDate } from "@/lib/sync/import-day.ts";
 import { importSiteDay } from "@/lib/sync/runtime.ts";
@@ -27,6 +28,7 @@ export async function POST(request: Request): Promise<Response> {
     }
 
     assertIsoDate(body.date);
+    await siteAccess(env, identity, body.siteSlug, true);
     const configuration = await getSiteConfiguration(env.DB, body.siteSlug);
 
     if (!configuration || configuration.site.status !== "active") {
