@@ -1,35 +1,27 @@
 import { NextResponse } from 'next/server';
+import { d1Query } from '@/lib/d1';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
-    const daysParam = parseInt(searchParams.get('days') || '14', 10);
+    const parsedDays = Number(searchParams.get('days') || '14');
+    const daysParam = Number.isInteger(parsedDays) && parsedDays >= 1 && parsedDays <= 480 ? parsedDays : 14;
+    // Escape LIKE wildcard characters and SQL string delimiters before constructing filters.
+    // Follow-up: migrate all conditional SQL to fully bound positional arguments.
+    const cleanFilter = (input: string) => input.slice(0, 150).replace(/'/g, "''").replace(/[%_]/g, '');
     
     const excludeBrand = searchParams.get('excludeBrand') === 'true';
-    const brandsStr = searchParams.get('brands') || '';
+    const brandsStr = cleanFilter(searchParams.get('brands') || '');
     const qPreset = searchParams.get('qPreset') || 'All';
-    const qSearch = searchParams.get('qSearch') || '';
+    const qSearch = cleanFilter(searchParams.get('qSearch') || '');
     const pPreset = searchParams.get('pPreset') || 'All';
-    const pSearch = searchParams.get('pSearch') || '';
+    const pSearch = cleanFilter(searchParams.get('pSearch') || '');
 
-    const { CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_DATABASE_ID, CLOUDFLARE_API_TOKEN } = process.env;
-    const d1Url = `https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/d1/database/${CLOUDFLARE_DATABASE_ID}/query`;
-    
-    const fetchFromD1 = async (sqlQuery: string) => {
-      const response = await fetch(d1Url, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${CLOUDFLARE_API_TOKEN}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sql: sqlQuery })
-      });
-      if (!response.ok) throw new Error(`Cloudflare Error`);
-      const result = await response.json();
-      if (!result.success) throw new Error(result.errors[0]?.message);
-      return result.result[0].results || [];
-    };
+    const fetchFromD1 = (sqlQuery: string) => d1Query<Record<string, any>>(sqlQuery);
 
-    const maxDateRes = await fetchFromD1("SELECT MAX(date) as maxDate FROM search_queries");
+    const maxDateRes = await fetchFromD1("SELECT MAX(date) as maxDate FROM import_status WHERE status = 'complete'");
     const maxDate = maxDateRes[0]?.maxDate;
     if (!maxDate) return NextResponse.json({ success: false, error: "دیتابیس خالی است." }, { status: 400 });
     
@@ -233,16 +225,18 @@ export async function GET(request: Request) {
       if (validPages.length > 1) {
         const pagesList = validPages.sort((a: any, b: any) => b.clicks - a.clicks);
         pagesList[0].isWinner = true; for(let i=1; i<pagesList.length; i++) pagesList[i].isWinner = false;
-        const isCritical = Math.abs(Number(pagesList[0].position) - Number(pagesList[1].position)) < 5;
+        // Multiple ranking URLs are candidates for review, not proof of harmful cannibalization.
+        const isCritical = false;
         const totalC = pagesList.reduce((sum: number, p: any) => sum + p.clicks, 0);
         cannibalizationData.push({ id: cId++, query: q, totalClicks: totalC, isCritical, competingPages: pagesList });
       }
     }
-    cannibalizationData.sort((a,b) => b.totalClicks - a.totalClicks).slice(0, 100);
+    cannibalizationData.sort((a,b) => b.totalClicks - a.totalClicks);
+    const topCannibalization = cannibalizationData.slice(0, 100);
 
     return NextResponse.json({ 
       success: true, 
-      data: { chartData, totals: processRow(totalsRes[0] || {}), queries: allQueries, pages: allPages, newRankings, contentGroups, topicClusters, cannibalizationData, strikingDistance, ctrBenchmark, contentDecay, zombies }
+      data: { chartData, totals: processRow(totalsRes[0] || {}), queries: allQueries, pages: allPages, newRankings, contentGroups, topicClusters, cannibalizationData: topCannibalization, strikingDistance, ctrBenchmark, contentDecay, zombies }
     });
 
   } catch (error: any) {

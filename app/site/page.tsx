@@ -21,7 +21,7 @@ export default function SiteDashboard() {
   const menuRef = useRef<HTMLDivElement>(null);
 
   const [excludeBrand, setExcludeBrand] = useState(true);
-  const [brandKeywords, setBrandKeywords] = useState("exir, اکسیر");
+  const [brandKeywords, setBrandKeywords] = useState("");
   
   const [querySearchInput, setQuerySearchInput] = useState("");
   const [debouncedQuerySearch, setDebouncedQuerySearch] = useState("");
@@ -124,11 +124,11 @@ export default function SiteDashboard() {
           });
 
           if (d.queries) setRealQueries(d.queries.map((r: any, i: number) => formatRow(r, i, r.text)));
-          if (d.pages) setRealPages(d.pages.map((r: any, i: number) => formatRow(r, i, decodeURI(r.text.replace('https://exir.vip', '') || '/'))));
+          if (d.pages) setRealPages(d.pages.map((r: any, i: number) => formatRow(r, i, decodeURI(r.text.replace(process.env.NEXT_PUBLIC_SITE_URL || 'https://exir.vip', '') || '/'))));
           if (d.contentGroups) setRealContentGroups(d.contentGroups.map((r: any, i: number) => formatRow(r, i, r.text)));
           if (d.topicClusters) setRealTopicClusters(d.topicClusters.map((r: any, i: number) => formatRow(r, i, r.text)));
           if (d.newRankings) setRealNewRankings(d.newRankings.map((r: any, i: number) => formatRow(r, i, r.text)));
-          if (d.zombies) setRealZombies(d.zombies.map((r: any, i: number) => formatRow(r, i, decodeURI(r.text.replace('https://exir.vip', '') || '/'))));
+          if (d.zombies) setRealZombies(d.zombies.map((r: any, i: number) => formatRow(r, i, decodeURI(r.text.replace(process.env.NEXT_PUBLIC_SITE_URL || 'https://exir.vip', '') || '/'))));
         }
       } catch (error) { 
         console.error("خطا:", error); 
@@ -231,7 +231,7 @@ export default function SiteDashboard() {
         <div className="flex items-center gap-2 text-gray-500 text-sm">
           <Link href="/" className="hover:text-gray-800 transition font-medium">سئوگتس</Link><span>/</span>
           <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-md border border-gray-200 shadow-sm text-gray-800 font-bold" dir="ltr">
-            <span className="text-purple-500">🌐</span> https://exir.vip/
+            <span className="text-purple-500">🌐</span> {process.env.NEXT_PUBLIC_SITE_URL || "سایت تنظیم‌شده"}
           </div>
         </div>
 
@@ -398,7 +398,7 @@ export default function SiteDashboard() {
             </button>
             <div className="mt-4 p-4 bg-slate-50 border border-gray-200 rounded-2xl">
               <label className="text-xs font-bold text-gray-700 block mb-2 flex items-center gap-1"><ShieldAlert size={14}/> کلمات برند سایت</label>
-              <input type="text" value={brandKeywords} onChange={(e) => setBrandKeywords(e.target.value)} placeholder="مثال: exir, اکسیر" className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-indigo-400" />
+              <input type="text" value={brandKeywords} onChange={(e) => setBrandKeywords(e.target.value)} placeholder="کلمات برند را با ویرگول جدا کنید" className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-indigo-400" />
             </div>
           </div>
 
@@ -419,7 +419,7 @@ export default function SiteDashboard() {
                     <tr key={idx} className="hover:bg-blue-50/30 transition">
                       <td className="py-4 font-bold text-right">
                         <div className="text-slate-800">{item.text}</div>
-                        {item.url && <a href={`https://exir.vip${item.url}`} target="_blank" className="text-[10px] text-blue-500 hover:text-blue-700 font-medium truncate max-w-[250px] block mt-1" dir="ltr">{decodeURI(item.url)}</a>}
+                        {item.url && <a href={item.url.startsWith('http') ? item.url : `${process.env.NEXT_PUBLIC_SITE_URL || 'https://exir.vip'}${item.url}`} target="_blank" className="text-[10px] text-blue-500 hover:text-blue-700 font-medium truncate max-w-[250px] block mt-1" dir="ltr">{decodeURI(item.url)}</a>}
                       </td>
                       <td className="font-black text-orange-600">{item.position.toFixed(1)}</td>
                       <td>{formatNumber(item.impressions)}</td>
@@ -437,7 +437,7 @@ export default function SiteDashboard() {
                     <tr key={idx} className="hover:bg-teal-50/30 transition">
                       <td className="py-4 font-bold text-right">
                         <div className="text-slate-800">{item.text}</div>
-                        {item.url && <a href={`https://exir.vip${item.url}`} target="_blank" className="text-[10px] text-teal-600 hover:text-teal-800 font-medium truncate max-w-[250px] block mt-1" dir="ltr">{decodeURI(item.url)}</a>}
+                        {item.url && <a href={item.url.startsWith('http') ? item.url : `${process.env.NEXT_PUBLIC_SITE_URL || 'https://exir.vip'}${item.url}`} target="_blank" className="text-[10px] text-teal-600 hover:text-teal-800 font-medium truncate max-w-[250px] block mt-1" dir="ltr">{decodeURI(item.url)}</a>}
                       </td>
                       <td className="text-rose-600 font-bold">-{item.missedClicks}</td>
                       <td>{item.ctr.toFixed(1)}%</td>
