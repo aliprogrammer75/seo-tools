@@ -1,7 +1,8 @@
 import type { AppEnv } from "../db/d1.ts";
+import { session } from "../auth/session.ts";
 import { ApiError } from "./api-error.ts";
 
-export interface InternalIdentity { email: string }
+export interface InternalIdentity { email: string; id?: string; isAdmin?: boolean }
 
 interface AccessPayload { email?: unknown; aud?: unknown; iss?: unknown; exp?: unknown; nbf?: unknown }
 interface AccessHeader { alg?: unknown; kid?: unknown }
@@ -51,6 +52,7 @@ async function signingKeys(domain: string): Promise<JsonWebKey[]> {
 }
 
 export async function requireInternalIdentity(request: Request, env: AppEnv): Promise<InternalIdentity> {
+  if (env.GOOGLE_OAUTH_CLIENT_ID) return session(request, env);
   const hostname = new URL(request.url).hostname;
   if (env.APP_ENV === "development" && (hostname === "localhost" || hostname === "127.0.0.1")) {
     return { email: "local-development" };
