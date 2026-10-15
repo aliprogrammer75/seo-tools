@@ -22,7 +22,7 @@ function dateIsReady(value: string | null): value is string {
     date.getTime() <= latest.getTime() && date.getTime() >= Date.UTC(2020, 0, 1);
 }
 
-async function importDate(targetDate: string) {
+export async function importDate(targetDate: string) {
   const siteUrl = process.env.GSC_SITE_URL;
   if (!siteUrl) throw new Error('GSC_SITE_URL is not configured');
   const existing = await d1Query<{ status: string }>('SELECT status FROM import_status WHERE date = ?', [targetDate]);
