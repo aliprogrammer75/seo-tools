@@ -1,15 +1,7 @@
 import Link from "next/link";
-
-export default function Home() {
-  return (
-    <div className="flex min-h-screen flex-col items-center justify-center bg-gray-50 font-[vazir]">
-      <h1 className="mb-6 text-3xl font-bold text-gray-800">به سئوتولز خوش آمدید</h1>
-      <Link
-        href="/site"
-        className="rounded-lg bg-blue-600 px-6 py-3 text-white shadow-md transition hover:bg-blue-700"
-      >
-        ورود به داشبورد اصلی
-      </Link>
-    </div>
-  );
-}
+export default function Home(){return <main dir="rtl" className="mx-auto flex min-h-[75vh] max-w-xl flex-col items-center justify-center gap-6 text-center">
+<h1 className="text-3xl font-extrabold text-slate-900">SEO Tools</h1>
+<p className="text-slate-600">ورود امن با گوگل، مدیریت پراپرتی‌های سرچ کنسول و تحلیل داده‌های سایت‌های مجاز شما.</p>
+<a href="/api/auth/google/start" className="rounded-xl bg-blue-600 px-7 py-3 font-bold text-white hover:bg-blue-700">ورود با حساب گوگل</a>
+<Link href="/site" className="text-sm text-blue-700 underline">مشاهده داشبورد پس از ورود</Link>
+</main>}
