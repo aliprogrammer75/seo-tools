@@ -227,3 +227,18 @@ test("rejects impossible calendar dates before creating a run", async () => {
     /valid calendar date/,
   );
 });
+
+test("rejects non-finalized dates before creating a run", async () => {
+  const repository = new MemoryRepository();
+  const date = new Date(Date.now() + 7 * 86_400_000).toISOString().slice(0, 10);
+  await assert.rejects(
+    importSearchConsoleDay({
+      site,
+      date,
+      repository,
+      searchConsole: { async queryPage() { throw new Error("must not fetch GSC"); } },
+    }),
+    /latest finalized Search Console day/,
+  );
+  assert.equal(repository.rows.size, 0);
+});
