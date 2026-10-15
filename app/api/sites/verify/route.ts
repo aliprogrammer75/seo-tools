@@ -1,3 +1,4 @@
+import { requireAdmin } from "@/lib/auth/session.ts";
 import { getAppEnv } from "@/lib/runtime/cloudflare.ts";
 import { requireInternalIdentity } from "@/lib/http/auth.ts";
 import { errorResponse, ApiError } from "@/lib/http/api-error.ts";
@@ -12,7 +13,7 @@ export const dynamic = "force-dynamic";
 export async function POST(request: Request): Promise<Response> {
   try {
     const env = await getAppEnv();
-    await requireInternalIdentity(request, env);
+    await requireAdmin(request, env);
     assertSameOrigin(request);
     const body = await request.json().catch(() => null) as {slug?: unknown; activate?: unknown} | null;
     if (!body || typeof body.slug !== "string" || !/^[a-z][a-z0-9-]{2,47}$/.test(body.slug) ||
