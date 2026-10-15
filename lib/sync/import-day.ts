@@ -1,4 +1,5 @@
 import { GSC_MAX_ROW_LIMIT, type SearchAnalyticsDimension } from "../search-console/pagination.ts";
+import { latestFinalSearchConsoleDate } from "./date.ts";
 import type { SiteRecord } from "../db/sites.ts";
 import type {
   NormalizedMetricRow,
@@ -104,6 +105,10 @@ function safeErrorMessage(error: unknown): string {
 
 export async function importSearchConsoleDay(input: ImportDayInput): Promise<ImportDayResult> {
   assertIsoDate(input.date);
+  // Do not save provisional or future Search Console data as a completed daily run.
+  if (input.date > latestFinalSearchConsoleDate()) {
+    throw new RangeError("Date exceeds the latest finalized Search Console day");
+  }
 
   const run = await input.repository.beginRun({
     siteId: input.site.id,
