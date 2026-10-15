@@ -1,3 +1,4 @@
+import { requireAdmin } from "@/lib/auth/session.ts";
 import { getAppEnv } from "@/lib/runtime/cloudflare.ts";
 import { requireInternalIdentity } from "@/lib/http/auth.ts";
 import { errorResponse } from "@/lib/http/api-error.ts";
@@ -10,7 +11,7 @@ export const dynamic = "force-dynamic";
 
 async function authorized(request: Request) {
   const env = await getAppEnv();
-  await requireInternalIdentity(request, env);
+  await requireAdmin(request, env);
   return env;
 }
 export async function GET(request: Request) {
