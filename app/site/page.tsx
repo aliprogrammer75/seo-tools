@@ -231,7 +231,7 @@ export default function SiteDashboard() {
         <div className="flex items-center gap-2 text-gray-500 text-sm">
           <Link href="/" className="hover:text-gray-800 transition font-medium">سئوگتس</Link><span>/</span>
           <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-md border border-gray-200 shadow-sm text-gray-800 font-bold" dir="ltr">
-            <span className="text-purple-500">🌐</span> https://exir.vip/
+            <span className="text-purple-500">🌐</span> {process.env.NEXT_PUBLIC_SITE_URL || "سایت تنظیم‌شده"}
           </div>
         </div>
 
