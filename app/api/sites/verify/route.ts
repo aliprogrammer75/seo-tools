@@ -1,4 +1,3 @@
-import { requireAdmin } from "@/lib/auth/session.ts";
 import { googleAccessToken } from "@/lib/auth/oauth.ts";
 import { requireAdmin } from "@/lib/auth/session.ts";
 import { getAppEnv } from "@/lib/runtime/cloudflare.ts";
@@ -15,7 +14,7 @@ export const dynamic = "force-dynamic";
 export async function POST(request: Request): Promise<Response> {
   try {
     const env = await getAppEnv();
-    const admin=await requireAdmin(request, env);
+    await requireAdmin(request, env);
     assertSameOrigin(request);
     const body = await request.json().catch(() => null) as {slug?: unknown; activate?: unknown} | null;
     if (!body || typeof body.slug !== "string" || !/^[a-z][a-z0-9-]{2,47}$/.test(body.slug) ||
@@ -35,7 +34,7 @@ export async function POST(request: Request): Promise<Response> {
       await client.queryPage({ startDate: date, endDate: date, dimensions: ["date"], rowLimit: 1, startRow: 0, type: configuration.site.default_search_type, dataState: "final" });
     } catch (error) {
       if (error instanceof SearchConsoleApiError && (error.status === 403 || error.status === 404)) {
-        throw new ApiError(403, "GSC_ACCESS_DENIED", "سرویس‌اکانت به پراپرتی سرچ کنسول دسترسی ندارد یا پراپرتی ثبت نشده است.");
+        throw new ApiError(403, "GSC_ACCESS_DENIED", "حساب گوگل متصل به پراپرتی سرچ کنسول دسترسی ندارد یا پراپرتی ثبت نشده است.");
       }
       throw error;
     }
