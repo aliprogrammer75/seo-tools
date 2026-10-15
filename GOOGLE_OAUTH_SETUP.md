@@ -15,7 +15,10 @@
 
 ## Deployment sequence
 1. Apply the new `0003_google_oauth.sql` migration to **staging only**.
-2. Create a Google OAuth Web client and register the exact redirect URI.
+2. Create a Google OAuth Web client and register **both** exact HTTPS redirect URIs:
+   - `https://YOUR_HOST/api/auth/google/callback` (login)
+   - `https://YOUR_HOST/api/google/callback` (Search Console connect)
+   Set `GOOGLE_OAUTH_REDIRECT_URI` to the **first** URI.
 3. Configure all variables from `.dev.vars.example` as **Cloudflare Worker secrets**.
 4. If the Google OAuth consent screen is in Testing, add the desired tester Gmail accounts.
 5. Verify Google Search Console API is enabled for the OAuth project's Google Cloud project.
@@ -26,3 +29,9 @@
 
 **Important:** Google may require OAuth app verification before broad public use.
 Do not disclose OAuth client secret, encryption keys, or refresh tokens in repositories or messages.
+
+## Account management
+- Admin dashboard: `/team` (invite emails, grant/revoke viewer or manager access per site).
+- Connect Google Search Console from `/sites` via **اتصال جیمیل به سرچ کنسول** and **انتخاب جیمیل متصل**.
+- `/api/google/properties` lists sites accessible to the connected account; access cannot be granted by typing a site name.
+- An invited viewer cannot import data or manage sites; a manager of a site can import that site, while only a global admin can configure projects and OAuth sources.
