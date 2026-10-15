@@ -1,8 +1,15 @@
-GOOGLE_SERVICE_ACCOUNT_EMAIL=seo-tools-reader@seo-tools-internal.iam.gserviceaccount.com
-GOOGLE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\nREPLACE_WITH_LOCAL_TEST_KEY\n-----END PRIVATE KEY-----\n"
-CRON_SECRET=replace-with-a-long-random-value
-APP_ENV=development
-
-# Cloudflare Access application (required for production)
-TEAM_DOMAIN=https://your-team.cloudflareaccess.com
-POLICY_AUD=your-access-application-audience
+# OAuth application configured in Google Cloud → Google Auth Platform.
+GOOGLE_OAUTH_CLIENT_ID=
+GOOGLE_OAUTH_CLIENT_SECRET=
+# The URL must exactly match the Authorized redirect URI in Google Cloud.
+GOOGLE_OAUTH_REDIRECT_URI=https://seo.example.com/api/auth/google/callback
+# 32 random bytes, base64 encoded. Needed for AES-GCM refresh-token encryption.
+TOKEN_ENCRYPTION_KEY=
+# The first (or several) permanent administrator emails. Separate with commas.
+ADMIN_EMAILS=admin@example.com
+# Secret for scheduled /api/sync.
+CRON_SECRET=
+# Optional fallback ONLY for legacy service-account imports.
+GOOGLE_SERVICE_ACCOUNT_EMAIL=
+GOOGLE_PRIVATE_KEY=
+APP_ENV=production
