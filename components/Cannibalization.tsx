@@ -39,7 +39,7 @@ export default function Cannibalization({ data }: { data: any[] }) {
           <div>
             <h2 className="text-xl font-black text-slate-800 mb-2">هم‌خواری کلمات کلیدی (Cannibalization)</h2>
             <p className="text-slate-600 text-sm leading-relaxed max-w-4xl">
-              در این بخش، کلماتی را مشاهده می‌کنید که بیشتر از یک صفحه از سایت شما برای آن‌ها در گوگل رقابت می‌کنند. ردیف‌هایی که با لیبل <strong className="text-rose-600">بحرانی</strong> مشخص شده‌اند، یعنی فاصله رتبه دو صفحه کمتر از ۵ پوزیشن است و در حال تخریبِ یکدیگر هستند!
+              در این بخش، کلماتی را مشاهده می‌کنید که بیشتر از یک صفحه از سایت شما برای آن‌ها در گوگل رقابت می‌کنند. ردیف‌هایی که با لیبل <strong className="text-rose-600">بحرانی</strong> مشخص شده‌اند، صرفاً نشان می‌دهند که ممکن است نیاز به بازبینی نیت جستجو و هدف صفحات داشته باشند.
             </p>
           </div>
         </div>
@@ -103,7 +103,7 @@ export default function Cannibalization({ data }: { data: any[] }) {
                           ) : (
                             <div className="bg-gray-100 text-gray-400 p-2 rounded-lg"><ExternalLink size={18} /></div>
                           )}
-                          <a href={`https://exir.vip${page.url}`} target="_blank" className="text-sm font-medium text-slate-700 hover:text-blue-600 truncate" dir="ltr">
+                          <a href={page.url.startsWith('http') ? page.url : `${process.env.NEXT_PUBLIC_SITE_URL || 'https://exir.vip'}${page.url}`} target="_blank" className="text-sm font-medium text-slate-700 hover:text-blue-600 truncate" dir="ltr">
                             {page.url}
                           </a>
                         </div>
