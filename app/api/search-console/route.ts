@@ -18,6 +18,7 @@ import {
   type DateWindowInput,
 } from "@/lib/insights/repository.ts";
 import type { Metrics, PageMetric, QueryMetric } from "@/lib/insights/types.ts";
+import { session, siteAccess } from "@/lib/auth/session.ts";
 import { getAppEnv } from "@/lib/runtime/cloudflare.ts";
 import {
   classifyBrandQuery,
@@ -171,9 +172,10 @@ function filterPages(
 export async function GET(request: Request): Promise<Response> {
   try {
     const env = await getAppEnv();
-    await requireInternalIdentity(request, env);
+    const identity = await session(request, env);
     const url = new URL(request.url);
     const siteSlug = url.searchParams.get("site")?.trim() || "digikhab";
+    if (siteSlug) await siteAccess(env, identity, siteSlug);
     const days = Number(url.searchParams.get("days") ?? "14");
     if (!Number.isInteger(days) || days < 7 || days > 489) {
       throw new ApiError(400, "INVALID_RANGE", "بازه باید بین ۷ تا ۴۸۹ روز باشد.");
