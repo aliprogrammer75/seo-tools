@@ -1,0 +1,17 @@
+"use client";
+import {useEffect,useState} from "react";
+import Link from "next/link";
+type Member={id:string;email:string;name:string};
+type Site={slug:string;name:string};
+export default function TeamPage(){
+ const [users,setUsers]=useState<Member[]>([]),[sites,setSites]=useState<Site[]>([]);
+ const [email,setEmail]=useState(""),[site,setSite]=useState(""),[role,setRole]=useState<"viewer"|"manager">("viewer");
+ const [status,setStatus]=useState("");
+ async function load(){try{const [a,b]=await Promise.all([fetch("/api/admin/members"),fetch("/api/sites/manage")]);if(!a.ok||!b.ok)throw new Error("این صفحه فقط برای مدیر سیستم در دسترس است.");const ua=await a.json(),sb=await b.json();setUsers(ua.users||[]);setSites(sb.sites||[]);if(!site&&sb.sites?.[0])setSite(sb.sites[0].slug);}catch(e){setStatus(e instanceof Error?e.message:"خطا")}}
+ useEffect(()=>{void load()},[]);
+ async function send(path:string,body:object,method="POST"){setStatus("");try{const r=await fetch(path,{method,headers:{"content-type":"application/json"},body:JSON.stringify(body)});const data=await r.json();if(!r.ok)throw new Error(data.error||"درخواست ناموفق بود");setStatus("ثبت شد.");await load()}catch(e){setStatus(e instanceof Error?e.message:"خطا")}}
+ return <section dir="rtl" className="mx-auto max-w-3xl space-y-6"><div className="flex items-center justify-between"><h1 className="text-2xl font-bold">مدیریت دسترسی همکاران</h1><Link href="/sites" className="text-blue-700">سایت‌ها</Link></div><p className="text-sm text-slate-600">ابتدا ایمیل همکار را دعوت کنید؛ بعد از اولین ورود او با گوگل می‌توانید مجوز هر سایت را جداگانه بدهید.</p>{status&&<p role="status" className="rounded-xl border p-3">{status}</p>}
+ <form onSubmit={e=>{e.preventDefault();void send("/api/admin/members",{email})}} className="rounded-xl bg-white p-5 shadow-sm space-y-3"><h2 className="font-bold">دعوت همکار</h2><input required type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="email@gmail.com" className="w-full rounded-lg border p-3" /><button className="rounded-lg bg-blue-600 px-5 py-2 text-white">دعوت</button></form>
+ <form onSubmit={e=>{e.preventDefault();void send("/api/admin/memberships",{email,siteSlug:site,role})}} className="rounded-xl bg-white p-5 shadow-sm space-y-3"><h2 className="font-bold">مجوز پروژه</h2><select aria-label="انتخاب پروژه" className="w-full border p-3 rounded-lg" value={site} onChange={e=>setSite(e.target.value)}>{sites.map(s=><option key={s.slug} value={s.slug}>{s.name}</option>)}</select><select aria-label="نقش" className="w-full border p-3 rounded-lg" value={role} onChange={e=>setRole(e.target.value as "viewer"|"manager")}><option value="viewer">مشاهده‌گر</option><option value="manager">مدیر پروژه (واردسازی داده)</option></select><button disabled={!site||!email} className="rounded-lg bg-indigo-600 px-5 py-2 text-white disabled:opacity-50">ثبت دسترسی</button><button type="button" disabled={!site||!email} onClick={()=>void send("/api/admin/memberships",{email,siteSlug:site},"DELETE")} className="mr-2 rounded-lg border border-rose-300 px-4 py-2 text-rose-700">لغو دسترسی</button></form>
+ <div className="rounded-xl bg-white p-5"><h2 className="mb-3 font-bold">کاربرانی که وارد شده‌اند</h2>{users.map(u=><p className="border-b py-2 text-sm" key={u.id}>{u.name} — {u.email}</p>)}</div></section>
+}
