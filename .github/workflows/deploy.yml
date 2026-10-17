@@ -12,30 +12,45 @@ jobs:
     environment: staging
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
         with:
           node-version: 24
           cache: npm
-
       - run: npm ci
-
-      - name: Configure Worker secrets
+      - run: npm test
+      - run: npm run typecheck
+      - name: Check required staging secrets
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          GOOGLE_SERVICE_ACCOUNT_EMAIL: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_EMAIL }}
-          GOOGLE_PRIVATE_KEY: ${{ secrets.GOOGLE_PRIVATE_KEY }}
+          GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+          GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
+          GOOGLE_OAUTH_REDIRECT_URI: ${{ secrets.GOOGLE_OAUTH_REDIRECT_URI }}
+          TOKEN_ENCRYPTION_KEY: ${{ secrets.TOKEN_ENCRYPTION_KEY }}
+          ADMIN_EMAILS: ${{ secrets.ADMIN_EMAILS }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
-          TEAM_DOMAIN: ${{ secrets.TEAM_DOMAIN }}
-          POLICY_AUD: ${{ secrets.POLICY_AUD }}
         run: |
-          printf '%s' "$GOOGLE_SERVICE_ACCOUNT_EMAIL" | npx wrangler secret put GOOGLE_SERVICE_ACCOUNT_EMAIL
-          printf '%s' "$GOOGLE_PRIVATE_KEY" | npx wrangler secret put GOOGLE_PRIVATE_KEY
-          printf '%s' "$CRON_SECRET" | npx wrangler secret put CRON_SECRET
-          printf '%s' "$TEAM_DOMAIN" | npx wrangler secret put TEAM_DOMAIN
-          printf '%s' "$POLICY_AUD" | npx wrangler secret put POLICY_AUD
-
-      - name: Deploy Worker
+          for key in CLOUDFLARE_API_TOKEN GOOGLE_OAUTH_CLIENT_ID GOOGLE_OAUTH_CLIENT_SECRET GOOGLE_OAUTH_REDIRECT_URI TOKEN_ENCRYPTION_KEY ADMIN_EMAILS CRON_SECRET; do
+            if [ -z "${!key}" ]; then
+              echo "::error::Required staging secret is not configured: $key"
+              exit 1
+            fi
+          done
+      - name: Build Cloudflare Worker
+        run: npm run cf-build
+      - name: Deploy staging Worker
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-        run: npm run deploy
+        run: npx wrangler deploy
+      - name: Configure OAuth secrets on deployed Worker
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+          GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
+          GOOGLE_OAUTH_REDIRECT_URI: ${{ secrets.GOOGLE_OAUTH_REDIRECT_URI }}
+          TOKEN_ENCRYPTION_KEY: ${{ secrets.TOKEN_ENCRYPTION_KEY }}
+          ADMIN_EMAILS: ${{ secrets.ADMIN_EMAILS }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          for key in GOOGLE_OAUTH_CLIENT_ID GOOGLE_OAUTH_CLIENT_SECRET GOOGLE_OAUTH_REDIRECT_URI TOKEN_ENCRYPTION_KEY ADMIN_EMAILS CRON_SECRET; do
+            printf '%s' "${!key}" | npx wrangler secret put "$key"
+          done
