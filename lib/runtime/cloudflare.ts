@@ -20,11 +20,16 @@ export async function getAppEnv(): Promise<AppEnv> {
 
   return {
     DB: values.DB as AppEnv["DB"],
-    GOOGLE_SERVICE_ACCOUNT_EMAIL: requireString(values, "GOOGLE_SERVICE_ACCOUNT_EMAIL"),
-    GOOGLE_PRIVATE_KEY: requireString(values, "GOOGLE_PRIVATE_KEY"),
+    GOOGLE_SERVICE_ACCOUNT_EMAIL: String(values.GOOGLE_SERVICE_ACCOUNT_EMAIL || ""),
+    GOOGLE_PRIVATE_KEY: String(values.GOOGLE_PRIVATE_KEY || ""),
     CRON_SECRET: requireString(values, "CRON_SECRET"),
-    TEAM_DOMAIN: requireString(values, "TEAM_DOMAIN"),
-    POLICY_AUD: requireString(values, "POLICY_AUD"),
+    TEAM_DOMAIN: String(values.TEAM_DOMAIN || ""),
+    POLICY_AUD: String(values.POLICY_AUD || ""),
+    GOOGLE_OAUTH_CLIENT_ID: String(values.GOOGLE_OAUTH_CLIENT_ID || ""),
+    GOOGLE_OAUTH_CLIENT_SECRET: String(values.GOOGLE_OAUTH_CLIENT_SECRET || ""),
+    GOOGLE_OAUTH_REDIRECT_URI: String(values.GOOGLE_OAUTH_REDIRECT_URI || ""),
+    TOKEN_ENCRYPTION_KEY: String(values.TOKEN_ENCRYPTION_KEY || ""),
+    ADMIN_EMAILS: String(values.ADMIN_EMAILS || ""),
     APP_ENV: values.APP_ENV === "development" ? "development" : "production",
   };
 }

@@ -1,0 +1,6 @@
+import {getAppEnv} from "@/lib/runtime/cloudflare.ts";
+import {requireAdmin,originCheck} from "@/lib/auth/session.ts";
+import {ApiError,errorResponse} from "@/lib/http/api-error.ts";
+export const dynamic="force-dynamic";
+export async function GET(request:Request){try{const env=await getAppEnv();await requireAdmin(request,env);const rows=await env.DB.prepare("SELECT u.id,u.email,u.name FROM app_users u ORDER BY u.email").all();const allowed=await env.DB.prepare("SELECT email FROM permitted_emails ORDER BY email").all();return Response.json({success:true,users:rows.results||[],invitedEmails:allowed.results||[]});}catch(e){return errorResponse(e)}}
+export async function POST(request:Request){try{const env=await getAppEnv();const admin=await requireAdmin(request,env);originCheck(request);const b=await request.json() as {email?:string};const email=b?.email?.trim().toLowerCase();if(!email||email.length>254||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))throw new ApiError(400,"EMAIL","ایمیل معتبر نیست.");await env.DB.prepare("INSERT OR IGNORE INTO permitted_emails(email,added_by) VALUES (?,?)").bind(email,admin.email).run();return Response.json({success:true,email});}catch(e){return errorResponse(e)}}

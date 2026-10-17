@@ -1,6 +1,7 @@
 import { getSiteConfiguration } from "@/lib/db/sites.ts";
 import { ApiError, errorResponse } from "@/lib/http/api-error.ts";
 import { requireInternalIdentity } from "@/lib/http/auth.ts";
+import { session, siteAccess } from "@/lib/auth/session.ts";
 import { getAppEnv } from "@/lib/runtime/cloudflare.ts";
 import { expectedDateRange, latestFinalSearchConsoleDate } from "@/lib/sync/date.ts";
 
@@ -13,9 +14,10 @@ interface CompletedDateRow {
 export async function GET(request: Request): Promise<Response> {
   try {
     const env = await getAppEnv();
-    await requireInternalIdentity(request, env);
+    const identity = await session(request, env);
     const url = new URL(request.url);
     const siteSlug = url.searchParams.get("site")?.trim();
+    if (siteSlug) await siteAccess(env, identity, siteSlug);
     const days = Number(url.searchParams.get("days") ?? "120");
 
     if (!siteSlug) {

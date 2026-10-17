@@ -84,7 +84,7 @@ export default function ManageSites() {
   return <div dir="rtl" className="mx-auto max-w-5xl space-y-7 text-right">
     <header className="flex flex-wrap items-center justify-between gap-4">
       <div><h1 className="text-2xl font-extrabold">مدیریت سایت‌ها</h1><p className="mt-2 text-sm text-slate-500">پراپرتی‌های سرچ کنسول و دسترسی‌ها</p></div>
-      <Link className="rounded-lg border border-slate-300 px-3 py-2 text-sm" href="/site">داشبورد</Link>
+      <div className="flex gap-2"><a className="rounded-lg bg-indigo-600 px-3 py-2 text-sm text-white" href="/api/google/connect">اتصال جیمیل به سرچ کنسول</a><Link className="rounded-lg border border-slate-300 px-3 py-2 text-sm" href="/site">داشبورد</Link></div>
     </header>
     {error && <p role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-rose-800">{error}</p>}
     {status && <p role="status" className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-emerald-800">{status}</p>}
@@ -99,6 +99,7 @@ export default function ManageSites() {
             <p dir="ltr" className="mt-1 break-all text-left text-xs text-slate-500">{site.gsc_property_url}</p>
           </div>
           <div className="flex flex-wrap gap-2">
+            <button type="button" disabled={!!working} onClick={() => void (async()=>{try{await api("/api/google/assign-site",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({slug:site.slug})});setStatus("حساب گوگل متصل برای "+site.name+" ثبت شد.");setError("");}catch(e){setError(e instanceof Error?e.message:"خطا در تخصیص حساب گوگل");}})()} className="rounded-lg border border-indigo-300 px-3 py-2 text-xs font-bold text-indigo-700 disabled:opacity-50">انتخاب جیمیل متصل</button>
             <button type="button" disabled={!!working} onClick={() => void verify(site, false)} className="rounded-lg border border-blue-300 px-3 py-2 text-xs font-bold text-blue-700 disabled:opacity-50">تست دسترسی GSC</button>
             {site.status === "paused" && <button type="button" disabled={!!working} onClick={() => void verify(site, true)} className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-bold text-white disabled:opacity-50">تأیید و فعال‌سازی</button>}
             {site.status === "active" && <button type="button" disabled={!!working} onClick={() => void pause(site)} className="rounded-lg border border-amber-300 px-3 py-2 text-xs font-bold text-amber-700 disabled:opacity-50">توقف</button>}
