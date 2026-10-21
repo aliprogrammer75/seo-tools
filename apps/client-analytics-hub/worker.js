@@ -1,7 +1,7 @@
 
 /* Client Analytics Hub - Cloudflare Workers + D1. Tenant isolation is enforced server side. */
 const encoder = new TextEncoder();
-const SECURITY = {"x-content-type-options":"nosniff","referrer-policy":"no-referrer","x-frame-options":"DENY","cross-origin-resource-policy":"same-origin","cache-control":"no-store","permissions-policy":"camera=(), microphone=(), geolocation=()"};
+const SECURITY = {"x-content-type-options":"nosniff","referrer-policy":"no-referrer","x-frame-options":"DENY","x-robots-tag":"noindex, nofollow, noarchive","cross-origin-resource-policy":"same-origin","cache-control":"no-store","permissions-policy":"camera=(), microphone=(), geolocation=()"};
 function resp(data,status=200,extra={}) { return new Response(JSON.stringify(data),{status,headers:{...SECURITY,"content-type":"application/json; charset=utf-8",...extra}}); }
 function fail(code,message){return resp({ok:false,error:message},code);}
 function page(content,type){return new Response(content,{headers:{...SECURITY,"content-type":type,"content-security-policy":"default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'self' "}});}
