@@ -53,3 +53,47 @@ CREATE INDEX IF NOT EXISTS idx_land_period ON landing_snapshots(site_id,period_e
 -- Added in migration 2026-10-22; ALTER sites archived_at on existing deployments
 CREATE TABLE IF NOT EXISTS site_integrations (site_id INTEGER NOT NULL REFERENCES sites(id), kind TEXT NOT NULL, encrypted_credentials TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1, last_attempt_at TEXT, last_success_at TEXT, last_status TEXT NOT NULL DEFAULT 'pending', last_error TEXT, PRIMARY KEY(site_id,kind));
 CREATE INDEX IF NOT EXISTS idx_site_archived ON sites(archived_at);
+
+
+-- Analytics 4 connections and tenant-isolated aggregate snapshots, added 2026-10-22
+CREATE TABLE IF NOT EXISTS ga4_connections (
+ site_id INTEGER NOT NULL PRIMARY KEY REFERENCES sites(id),
+ property_id TEXT NOT NULL,
+ enabled INTEGER NOT NULL DEFAULT 1,
+ last_attempt_at TEXT,
+ last_success_at TEXT,
+ last_status TEXT NOT NULL DEFAULT 'pending',
+ last_error TEXT
+);
+CREATE TABLE IF NOT EXISTS ga4_channel_snapshots (
+ site_id INTEGER NOT NULL REFERENCES sites(id),
+ period_start TEXT NOT NULL,
+ period_end TEXT NOT NULL,
+ channel_group TEXT NOT NULL,
+ source_medium TEXT NOT NULL,
+ sessions INTEGER NOT NULL DEFAULT 0,
+ users INTEGER NOT NULL DEFAULT 0,
+ engaged_sessions INTEGER NOT NULL DEFAULT 0,
+ ga4_purchases INTEGER NOT NULL DEFAULT 0,
+ purchase_revenue REAL NOT NULL DEFAULT 0,
+ PRIMARY KEY(site_id,period_start,period_end,channel_group,source_medium)
+);
+CREATE INDEX IF NOT EXISTS idx_ga4_channels_period ON ga4_channel_snapshots(site_id,period_end);
+CREATE TABLE IF NOT EXISTS ga4_landing_snapshots (
+ site_id INTEGER NOT NULL REFERENCES sites(id),
+ period_start TEXT NOT NULL,
+ period_end TEXT NOT NULL,
+ page_path TEXT NOT NULL,
+ sessions INTEGER NOT NULL DEFAULT 0,
+ users INTEGER NOT NULL DEFAULT 0,
+ engaged_sessions INTEGER NOT NULL DEFAULT 0,
+ PRIMARY KEY(site_id,period_start,period_end,page_path)
+);
+CREATE TABLE IF NOT EXISTS ga4_daily_snapshots (
+ site_id INTEGER NOT NULL REFERENCES sites(id),
+ day TEXT NOT NULL,
+ channel_group TEXT NOT NULL,
+ sessions INTEGER NOT NULL DEFAULT 0,
+ users INTEGER NOT NULL DEFAULT 0,
+ PRIMARY KEY(site_id,day,channel_group)
+);
