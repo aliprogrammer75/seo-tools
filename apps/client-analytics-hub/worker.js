@@ -76,7 +76,8 @@ async function syncSite(env,site){
    for(let page=1;page<=12;page++){
     const u=new URL("https://"+site.domain+"/wp-json/wc/v3/orders");
     for(const [k,v] of Object.entries({after:start+"T00:00:00",before:end+"T23:59:59",per_page:100,page,status,orderby:"date",order:"desc"}))u.searchParams.set(k,String(v));
-    const res=await fetch(u,{headers:{"authorization":basic,"accept":"application/json"},redirect:"error",signal:AbortSignal.timeout(20000)});
+    const res=await fetch(u,{headers:{"authorization":basic,"accept":"application/json"},redirect:"manual",signal:AbortSignal.timeout(20000)});
+    if(res.status>=300&&res.status<400)throw Error("WooCommerce API redirect: HTTP "+res.status+"; please verify the WordPress URL");
     if(!res.ok)throw Error("خطای ارتباط WooCommerce HTTP "+res.status);
     const totalPages=Number(res.headers.get("X-WP-TotalPages")||0);
     if(totalPages>12)throw Error("بیش از ۱۲۰۰ سفارش در وضعیت "+status+"؛ همگام‌سازی برای جلوگیری از گزارش ناقص متوقف شد");
