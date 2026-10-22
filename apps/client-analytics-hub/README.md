@@ -152,3 +152,19 @@ All five were populated with real GA4 reports for 2026-09-23 through 2026-10-22.
 - The GA4 `ecommercePurchases` count is incomplete on Exir and Moorashin compared to WooCommerce orders. GA4 tracking needs independent repair in GTM.
 - GA4 `totalUsers` reported by source must not be naively summed as the site's overall unique user count.
 - A temporary public health probe was used to test the Worker-to-Worker relay and successfully run Exir end-to-end; it was removed from the deployed Worker immediately after verification.
+
+## اعتبارسنجی Ecommerce – ۲۲ اکتبر ۲۰۲۶
+
+- برای اکسیر، GTM4WP، GA4 `G-24C5KXGB22`، کانتینر `GTM-MDTQNV93` و رویدادهای `view_item`, `add_to_cart`, `begin_checkout`, `purchase` از قبل برقرار هستند؛ آن‌ها را دوباره بازنویسی نکردیم.
+- در بازه ۲۰۲۶-۱۰-۱۵ تا ۲۰۲۶-۱۰-۲۲، ۳۵ سفارش پرداخت‌شده WooCommerce در وضعیت `completed/processing` و ۳۱ شناسه `transactionId` در GA4 یافت شد؛ ۳۱ شناسه تطبیق داشت. چهار سفارش در زمان بررسی فاقد تطبیق بودند: ۲۰۲۸۲، ۲۰۲۶۷، ۲۰۲۶۲ و ۲۱۵۵۲. آخری تازه ثبت شده و احتمال تأخیر پردازش دارد.
+- برای موراشین، در بازه ۲۰۲۶-۱۰-۱۹ تا ۲۰۲۶-۱۰-۲۲، ۱۲ سفارش پرداخت‌شده در وضعیت `completed/processing` و صفر تراکنش `purchase` در GA4 ثبت شده بود. پرداخت‌ها از درگاه `clinique_remote` می‌گذرند و Clarity بازگشت به صفحه استاندارد `order-received` را نشان می‌دهد.
+- در موراشین گزینه‌های `integrate-woocommerce-track-enhanced-ecommerce=true` و `integrate-woocommerce-purchase-track-on-any-page=true` از قبل فعال هستند؛ وضعیت‌های processing/completed در ردیابی لحاظ شده‌اند. فعال‌سازی دوباره این گزینه‌ها بی‌اثر خواهد بود.
+- در GTM Workspace 14 موراشین تغییرات ثبت‌نشده مشاهده شده؛ اتصال GTM فعلی ابزار Publish ندارد، لذا بدون تست و انتشار، تگ موازی purchase ایجاد نکردیم.
+- ارز `IRR` در [فهرست رسمی ارزهای پشتیبانی‌شده GA4](https://support.google.com/analytics/answer/9796179) نیست؛ ریال را نباید بدون تبدیل واقعی نرخ ارز با کد `USD` ارسال کرد. درآمد ووکامرس به تومان منبع مالی داشبورد باقی می‌ماند.
+- نتیجه تطبیق فقط شامل شناسه سفارش‌های عددی و آمار شمارشی است و هیچ نام، تماس، آدرس، IP یا کلید پرداخت مشتری در پایگاه نگهداری نمی‌شود.
+- داده‌های `ecommerce_tracking_audits` اسنپ‌شات هستند و خودکار به‌روز نمی‌شوند؛ مانیتورینگ پیوسته تراکنش‌ها مستلزم توسعه Woo sync و GA4 transactionId ingestion است.
+
+### API حسابرسی خرید
+- `GET /api/purchase-audit/:slug` تنها برای مدیر اصلی یا مدیر همان سایت قابل دسترسی است و آخرین تطبیق شماره سفارش‌ها را برمی‌گرداند.
+- نتیجه در تب «کیفیت داده‌ها» نمایش داده می‌شود، با تاریخ آخرین بررسی و فهرست سفارش‌هایی که در GA4 شناسه متناظر نداشتند.
+- وجود `_ga_tracked=1` در سفارش صرفاً نشانگر داخلی WooCommerce/GTM4WP است، نه اثبات مشاهده داده در GA4.
