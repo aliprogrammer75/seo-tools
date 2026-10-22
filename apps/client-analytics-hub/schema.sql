@@ -126,3 +126,27 @@ CREATE TABLE IF NOT EXISTS ga4_event_snapshots (
  PRIMARY KEY(site_id,period_start,period_end,event_name)
 );
 CREATE INDEX IF NOT EXISTS idx_ga4_event_site_period ON ga4_event_snapshots(site_id,period_end);
+
+-- Daily behavioural and order aggregates: tenant-scoped, no customer identifying information.
+CREATE TABLE IF NOT EXISTS ga4_day_metrics (
+ site_id INTEGER NOT NULL REFERENCES sites(id),day TEXT NOT NULL,
+ sessions INTEGER NOT NULL DEFAULT 0,total_users INTEGER NOT NULL DEFAULT 0,
+ engaged_sessions INTEGER NOT NULL DEFAULT 0,bounced_sessions INTEGER NOT NULL DEFAULT 0,
+ page_views INTEGER NOT NULL DEFAULT 0,avg_session_duration_seconds REAL NOT NULL DEFAULT 0,
+ updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,PRIMARY KEY(site_id,day)
+);
+CREATE TABLE IF NOT EXISTS ga4_day_events (
+ site_id INTEGER NOT NULL REFERENCES sites(id),day TEXT NOT NULL,event_name TEXT NOT NULL,
+ event_count INTEGER NOT NULL DEFAULT 0,user_count INTEGER NOT NULL DEFAULT 0,
+ PRIMARY KEY(site_id,day,event_name)
+);
+CREATE TABLE IF NOT EXISTS wc_day_sales (
+ site_id INTEGER NOT NULL REFERENCES sites(id),day TEXT NOT NULL,
+ paid_orders INTEGER NOT NULL DEFAULT 0,total_toman INTEGER NOT NULL DEFAULT 0,
+ updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,PRIMARY KEY(site_id,day)
+);
+CREATE TABLE IF NOT EXISTS ga4_navigation_pairs (
+ site_id INTEGER NOT NULL REFERENCES sites(id),period_start TEXT NOT NULL,period_end TEXT NOT NULL,
+ from_path TEXT NOT NULL,to_path TEXT NOT NULL,page_views INTEGER NOT NULL DEFAULT 0,
+ PRIMARY KEY(site_id,period_start,period_end,from_path,to_path)
+);
