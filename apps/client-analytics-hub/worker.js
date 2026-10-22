@@ -163,6 +163,22 @@ async function syncGa4Site(env,site){
    old.sessions+=gaInt(getGaMetric(row,0));old.users+=gaInt(getGaMetric(row,1));old.engaged+=gaInt(getGaMetric(row,2));landingMap.set(p,old);
   }
   const selectedLanding=[...landingMap.values()].sort((a,b)=>b.sessions-a.sessions).slice(0,200);
+  let navigationRows=null;
+  if(site.slug==="exir"){try{
+   const rawNav=await ga4Report(env,conn.property_id,"navigation",start,end);
+   const routeMap=new Map(),host=site.domain.toLowerCase().replace(/^www\./,"");
+   for(const r of rawNav.rows||[]){
+    let a,b,ref;
+    try{ref=new URL(getGaValue(r,0));if(ref.hostname.toLowerCase().replace(/^www\./,"")!==host)continue;
+     a=decodeURIComponent(ref.pathname||"/").slice(0,250);
+     b=decodeURIComponent(getGaValue(r,1).split("?")[0].split("#")[0]).slice(0,250);
+    }catch{continue;}
+    if(!a.startsWith("/")||!b.startsWith("/")||a===b||a.startsWith("/wp-admin")||b.startsWith("/wp-admin"))continue;
+    const key=a+"\n"+b;routeMap.set(key,(routeMap.get(key)||0)+gaInt(getGaMetric(r,0)));
+   }
+   navigationRows=[...routeMap].sort((x,y)=>y[1]-x[1]).slice(0,100);
+  }catch(err){console.warn("Exir page-navigation report skipped",String(err.message||err).slice(0,120));}}
+
   const statements=[
    env.DB.prepare("DELETE FROM ga4_channel_snapshots WHERE site_id=? AND period_start=? AND period_end=?").bind(site.id,start,end),
    env.DB.prepare("DELETE FROM ga4_landing_snapshots WHERE site_id=? AND period_start=? AND period_end=?").bind(site.id,start,end),
@@ -171,6 +187,8 @@ async function syncGa4Site(env,site){
    env.DB.prepare("DELETE FROM ga4_day_metrics WHERE site_id=? AND day BETWEEN ? AND ?").bind(site.id,start,end),
    env.DB.prepare("DELETE FROM ga4_day_events WHERE site_id=? AND day BETWEEN ? AND ?").bind(site.id,start,end)
   ];
+  if(navigationRows!==null)statements.push(env.DB.prepare("DELETE FROM ga4_navigation_pairs WHERE site_id=? AND period_start=? AND period_end=?").bind(site.id,start,end));
+  for(const [key,views] of navigationRows||[]){const parts=key.split("\n");statements.push(env.DB.prepare("INSERT INTO ga4_navigation_pairs(site_id,period_start,period_end,from_path,to_path,page_views) VALUES(?,?,?,?,?,?)").bind(site.id,start,end,parts[0],parts[1],views));}
   for(const row of ch){
    statements.push(env.DB.prepare("INSERT INTO ga4_channel_snapshots(site_id,period_start,period_end,channel_group,source_medium,sessions,users,engaged_sessions,ga4_purchases,purchase_revenue) VALUES(?,?,?,?,?,?,?,?,?,?)").bind(site.id,start,end,getGaValue(row,0).slice(0,150),getGaValue(row,1).slice(0,230),gaInt(getGaMetric(row,0)),gaInt(getGaMetric(row,1)),gaInt(getGaMetric(row,2)),gaInt(getGaMetric(row,3)),gaNum(getGaMetric(row,4))));
   }
@@ -201,7 +219,7 @@ async function syncGa4Site(env,site){
   const trunc=Number(landings.rowCount||0)>landingRows.length;
   statements.push(env.DB.prepare("UPDATE ga4_connections SET last_status=?,last_success_at=?,last_error=NULL WHERE site_id=?").bind(trunc?"ok_landing_limited":"ok",new Date().toISOString(),site.id));
   await env.DB.batch(statements);
-  return {ok:true,site_slug:site.slug,property_id:conn.property_id,period_start:start,period_end:end,channels:ch.length,landingPages:selectedLanding.length,days:ds.length,events:(events.rows||[]).length,dailyMetrics:(dayOverview.rows||[]).length,dailyEvents:(dayEvents.rows||[]).length,landingLimited:trunc};
+  return {ok:true,site_slug:site.slug,property_id:conn.property_id,period_start:start,period_end:end,channels:ch.length,landingPages:selectedLanding.length,days:ds.length,events:(events.rows||[]).length,dailyMetrics:(dayOverview.rows||[]).length,dailyEvents:(dayEvents.rows||[]).length,navigationPairs:navigationRows?.length||0,landingLimited:trunc};
  }catch(e){await env.DB.prepare("UPDATE ga4_connections SET last_status='error',last_error=? WHERE site_id=?").bind(String(e.message||e).slice(0,180),site.id).run();throw e}
 }
 async function scheduleGa4Sync(env){
