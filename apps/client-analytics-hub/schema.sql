@@ -150,3 +150,33 @@ CREATE TABLE IF NOT EXISTS ga4_navigation_pairs (
  from_path TEXT NOT NULL,to_path TEXT NOT NULL,page_views INTEGER NOT NULL DEFAULT 0,
  PRIMARY KEY(site_id,period_start,period_end,from_path,to_path)
 );
+
+-- Privacy-minimized purchase paths, strictly site-scoped, without customer contact data.
+CREATE TABLE IF NOT EXISTS purchase_journey_orders (
+ site_id INTEGER NOT NULL REFERENCES sites(id),
+ order_number TEXT NOT NULL,paid_at TEXT,order_status TEXT,
+ amount_toman INTEGER NOT NULL DEFAULT 0,source_channel TEXT,
+ entry_page TEXT,payment_method TEXT,products_json TEXT NOT NULL DEFAULT '[]',
+ PRIMARY KEY(site_id,order_number)
+);
+CREATE TABLE IF NOT EXISTS purchase_journey_observations (
+ site_id INTEGER NOT NULL REFERENCES sites(id),order_number TEXT NOT NULL,
+ session_ref TEXT NOT NULL,observed_at TEXT,source TEXT NOT NULL DEFAULT 'clarity',
+ pages_json TEXT NOT NULL DEFAULT '[]',actions_json TEXT NOT NULL DEFAULT '[]',
+ pages_before_purchase INTEGER NOT NULL DEFAULT 0,
+ coverage TEXT NOT NULL DEFAULT 'partial',recording_url TEXT,
+ updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+ PRIMARY KEY(site_id,order_number,session_ref)
+);
+CREATE INDEX IF NOT EXISTS idx_journeys_order ON purchase_journey_observations(site_id,order_number);
+CREATE INDEX IF NOT EXISTS idx_journeys_observed ON purchase_journey_observations(site_id,observed_at DESC);
+CREATE TABLE IF NOT EXISTS purchase_journey_event_snapshots (
+ site_id INTEGER NOT NULL REFERENCES sites(id),
+ order_number TEXT NOT NULL,event_position INTEGER NOT NULL,
+ event_time TEXT,event_name TEXT NOT NULL,page_path TEXT,
+ items_json TEXT NOT NULL DEFAULT '[]',
+ source TEXT NOT NULL DEFAULT 'ga4_bigquery',
+ received_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+ PRIMARY KEY(site_id,order_number,event_position)
+);
+CREATE INDEX IF NOT EXISTS idx_purchase_events_order ON purchase_journey_event_snapshots(site_id,order_number);
