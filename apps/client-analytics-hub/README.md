@@ -120,3 +120,35 @@ wrangler d1 execute client-analytics-hub --remote --file=./schema.sql
 - گزارش زمان‌بندی‌شده برای مشتری، هشدار افت فروش و خطای ترکینگ، audit trail، نسخه‌بندی نمودارها.
 - تست امنیتی End-to-End نقش‌های کارفرما در محیط production و کنترل لایه دسترسی.
 - امکان Drill-down به صفحات مشاهده‌شده در هر کانال نیازمند ذخیره داده ردیفی مشترک بین سفارش/صفحه است. از داده‌های تجمیعی فعلی قابل استنتاج نیست.
+
+## GA4 Integration – 2026-10-22
+
+The analytics platform now consumes Google Analytics 4 reports through **a private Cloudflare Workers service binding** `GA4_SOURCE` targeting the existing `ga4-analytics-mcp` Worker. A shared randomly generated `ANALYTICS_HUB_SYNC_TOKEN` secret authorizes the GA4 Worker's dedicated `POST /hub/report` endpoint; no raw Google OAuth credentials or refresh tokens are exported from that Worker. The shared secret is stored separately in both Workers.
+
+### Data model and controls
+
+- Admin-only `POST /api/admin/ga4/connect` links a site's numeric GA4 Property ID; `POST /api/admin/ga4/sync` fetches it on demand.
+- Tenant-scoped authenticated `GET /api/ga4/{site_slug}` returns only that site's GA4 data; filters `period_start` and `period_end` are optional.
+- The Google Analytics MCP OAuth grant is reused internally via the service binding, and existing connected GA4 calls were retested successfully.
+- The Cloudflare hourly Cron runs GA4 ingestion when a linked site's previous GA4 attempt is at least 6 hours old.
+- `ga4_channel_snapshots` stores sessions, users (per source), engaged sessions, GA4 purchase count and GA4-native revenue (not WooCommerce money); `ga4_landing_snapshots` stores landing-page summaries; `ga4_daily_snapshots` holds daily channel series.
+- Landing-page storage is capped at 200 unique pages per refresh; `ok_landing_limited` means the landing pages shown are not comprehensive.
+- The UI's **ترافیک GA4** panel displays the GA4 sessions, channel group, Source / Medium, daily volume, and landing pages. The **کیفیت داده‌ها** panel flags GA4-vs-WooCommerce ecommerce differences.
+
+### Linked properties
+
+- exir.vip — 559100143 (automated end-to-end sync tested successfully)
+- moorashin.com — 494820779
+- digikhab.org — 548277688
+- mobleiran.co — 489758470
+- laftika.com — 474760686
+
+All five were populated with real GA4 reports for 2026-09-23 through 2026-10-22. Other sites currently have no matching accessible GA4 Property in the connected account; use the admin Property ID form after granting access to the connected Google account.
+
+### Integrity notes
+
+- GA4 currency and property reporting timezone may differ from the store's timezone and WooCommerce order currency. Never mix GA4 `purchaseRevenue` into WooCommerce revenue without reconciliation.
+- Session Default Channel Group from GA4 and WooCommerce Order Attribution are **not** the same attribution model. Do not produce blended per-channel conversion rate or ROAS until validated.
+- The GA4 `ecommercePurchases` count is incomplete on Exir and Moorashin compared to WooCommerce orders. GA4 tracking needs independent repair in GTM.
+- GA4 `totalUsers` reported by source must not be naively summed as the site's overall unique user count.
+- A temporary public health probe was used to test the Worker-to-Worker relay and successfully run Exir end-to-end; it was removed from the deployed Worker immediately after verification.
