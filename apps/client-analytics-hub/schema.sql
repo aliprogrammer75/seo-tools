@@ -113,3 +113,16 @@ CREATE TABLE IF NOT EXISTS ecommerce_tracking_audits (
   source TEXT NOT NULL DEFAULT 'read_only_reconciliation',
   PRIMARY KEY(site_id,period_start,period_end)
 );
+
+-- GA4 event aggregates are collected from the same property & period as the GA4 channel snapshots.
+-- These are counts by event, NOT a user-sequenced funnel.
+CREATE TABLE IF NOT EXISTS ga4_event_snapshots (
+ site_id INTEGER NOT NULL REFERENCES sites(id),
+ period_start TEXT NOT NULL,
+ period_end TEXT NOT NULL,
+ event_name TEXT NOT NULL,
+ event_count INTEGER NOT NULL DEFAULT 0,
+ user_count INTEGER NOT NULL DEFAULT 0,
+ PRIMARY KEY(site_id,period_start,period_end,event_name)
+);
+CREATE INDEX IF NOT EXISTS idx_ga4_event_site_period ON ga4_event_snapshots(site_id,period_end);
