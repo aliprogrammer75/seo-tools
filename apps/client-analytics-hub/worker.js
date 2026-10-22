@@ -254,6 +254,7 @@ async function dailyDashboardData(env,site){
  for(const x of metrics.results||[]){const r=entry(x.day);r.sessions=x.sessions;r.users=x.total_users;r.engaged=x.engaged_sessions;r.bounced=x.bounced_sessions;r.page_views=x.page_views;r.duration=x.avg_session_duration_seconds;}
  for(const x of events.results||[]){const r=entry(x.day);r.events[x.event_name]=x.event_count;r.event_users[x.event_name]=x.user_count;}
  for(const x of sales.results||[]){const r=entry(x.day);r.woo_orders=x.paid_orders;r.woo_revenue_toman=x.total_toman;}
+ if((metrics.results||[]).length||(sales.results||[]).length){for(let t=Date.parse(start+"T12:00:00Z"),stop=Date.parse(end+"T12:00:00Z"),n=0;t<=stop&&n<93;t+=86400000,n++){entry(new Date(t).toISOString().slice(0,10));}}
  const days=[...rows.values()].sort((a,b)=>b.day.localeCompare(a.day));
  // WooCommerce zero-order days are known only inside the verified WooCommerce reporting interval.
  if(woo?.last_success_at){for(const r of days){if(r.woo_orders==null){r.woo_orders=0;r.woo_revenue_toman=0;}}}
