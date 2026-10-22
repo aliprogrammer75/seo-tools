@@ -97,3 +97,19 @@ CREATE TABLE IF NOT EXISTS ga4_daily_snapshots (
  users INTEGER NOT NULL DEFAULT 0,
  PRIMARY KEY(site_id,day,channel_group)
 );
+
+-- Manual paid-order-to-GA4 transaction audit snapshots; never store customer information.
+CREATE TABLE IF NOT EXISTS ecommerce_tracking_audits (
+  site_id INTEGER NOT NULL REFERENCES sites(id),
+  period_start TEXT NOT NULL,
+  period_end TEXT NOT NULL,
+  checked_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  woo_paid_orders INTEGER NOT NULL DEFAULT 0,
+  ga4_transactions INTEGER NOT NULL DEFAULT 0,
+  matched_orders INTEGER NOT NULL DEFAULT 0,
+  unreported_order_ids TEXT NOT NULL DEFAULT '[]',
+  ga4_unmatched_ids TEXT NOT NULL DEFAULT '[]',
+  woo_marked_orders INTEGER NOT NULL DEFAULT 0,
+  source TEXT NOT NULL DEFAULT 'read_only_reconciliation',
+  PRIMARY KEY(site_id,period_start,period_end)
+);
